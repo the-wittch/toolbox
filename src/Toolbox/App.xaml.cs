@@ -23,6 +23,26 @@ public partial class App : Application
 
     public App()
     {
+        // Application.RequestedTheme throws COMException if set after InitializeComponent.
+        // Load settings first so Light/Dark preferences apply to app chrome at startup.
+        try
+        {
+            Settings.Load();
+            var theme = ThemeService.Normalize(Settings.Current.Theme);
+            if (theme == "Light")
+            {
+                RequestedTheme = ApplicationTheme.Light;
+            }
+            else if (theme == "Dark")
+            {
+                RequestedTheme = ApplicationTheme.Dark;
+            }
+        }
+        catch
+        {
+            // Keep OS default theme if settings cannot be read yet.
+        }
+
         InitializeComponent();
         UnhandledException += OnUnhandledException;
     }
@@ -39,7 +59,6 @@ public partial class App : Application
             Theme = new ThemeService(Settings);
             Updater = new UpdateService(Settings);
             LocalInstall = new LocalInstallService(Settings);
-            Theme.ApplyApplicationThemeAtStartup();
 
             if (!AccessControl.HasAccess())
             {
