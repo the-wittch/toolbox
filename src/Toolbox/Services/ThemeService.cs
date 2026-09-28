@@ -31,6 +31,26 @@ public sealed class ThemeService
         }
     }
 
+    /// <summary>
+    /// Application.RequestedTheme can only be set before any Window is shown.
+    /// Call once at launch so app chrome matches a forced Light/Dark preference.
+    /// </summary>
+    public void ApplyApplicationThemeAtStartup()
+    {
+        if (Application.Current is null)
+        {
+            return;
+        }
+
+        var normalized = Normalize(_settings.Current.Theme);
+        Application.Current.RequestedTheme = normalized switch
+        {
+            "Light" => ApplicationTheme.Light,
+            "Dark" => ApplicationTheme.Dark,
+            _ => Application.Current.RequestedTheme
+        };
+    }
+
     public IReadOnlyList<(string Id, string Label)> GetThemeChoices()
     {
         var labels = _settings.Current.Labels;

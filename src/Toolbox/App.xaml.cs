@@ -39,6 +39,7 @@ public partial class App : Application
             Theme = new ThemeService(Settings);
             Updater = new UpdateService(Settings);
             LocalInstall = new LocalInstallService(Settings);
+            Theme.ApplyApplicationThemeAtStartup();
 
             if (!AccessControl.HasAccess())
             {

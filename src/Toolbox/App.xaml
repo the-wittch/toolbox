@@ -18,27 +18,36 @@
             -->
             <ResourceDictionary.ThemeDictionaries>
                 <ResourceDictionary x:Key="Default">
+                    <SolidColorBrush x:Key="ToolboxPageBrush" Color="#FF1A1A1A" />
                     <SolidColorBrush x:Key="ToolboxLayerBrush" Color="#FF202020" />
                     <SolidColorBrush x:Key="ToolboxCardBrush" Color="#FF2C2C2C" />
                     <SolidColorBrush x:Key="ToolboxCardStrokeBrush" Color="#FF3F3F3F" />
                     <SolidColorBrush x:Key="ToolboxDividerBrush" Color="#FF404040" />
                     <SolidColorBrush x:Key="ToolboxSubtleFillBrush" Color="#FF5A5A5A" />
+                    <SolidColorBrush x:Key="ToolboxTextPrimaryBrush" Color="#FFFFFFFF" />
+                    <SolidColorBrush x:Key="ToolboxTextSecondaryBrush" Color="#FFB3B3B3" />
                     <SolidColorBrush x:Key="ToolboxErrorBrush" Color="#FFFF99A4" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Light">
-                    <SolidColorBrush x:Key="ToolboxLayerBrush" Color="#FFF3F3F3" />
+                    <SolidColorBrush x:Key="ToolboxPageBrush" Color="#FFF3F3F3" />
+                    <SolidColorBrush x:Key="ToolboxLayerBrush" Color="#FFF9F9F9" />
                     <SolidColorBrush x:Key="ToolboxCardBrush" Color="#FFFFFFFF" />
                     <SolidColorBrush x:Key="ToolboxCardStrokeBrush" Color="#FFE0E0E0" />
                     <SolidColorBrush x:Key="ToolboxDividerBrush" Color="#FFD0D0D0" />
                     <SolidColorBrush x:Key="ToolboxSubtleFillBrush" Color="#FF9E9E9E" />
+                    <SolidColorBrush x:Key="ToolboxTextPrimaryBrush" Color="#FF1A1A1A" />
+                    <SolidColorBrush x:Key="ToolboxTextSecondaryBrush" Color="#FF666666" />
                     <SolidColorBrush x:Key="ToolboxErrorBrush" Color="#FFC42B1C" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="HighContrast">
+                    <SolidColorBrush x:Key="ToolboxPageBrush" Color="#FF000000" />
                     <SolidColorBrush x:Key="ToolboxLayerBrush" Color="#FF000000" />
                     <SolidColorBrush x:Key="ToolboxCardBrush" Color="#FF000000" />
                     <SolidColorBrush x:Key="ToolboxCardStrokeBrush" Color="#FFFFFFFF" />
                     <SolidColorBrush x:Key="ToolboxDividerBrush" Color="#FFFFFFFF" />
                     <SolidColorBrush x:Key="ToolboxSubtleFillBrush" Color="#FFC0C0C0" />
+                    <SolidColorBrush x:Key="ToolboxTextPrimaryBrush" Color="#FFFFFFFF" />
+                    <SolidColorBrush x:Key="ToolboxTextSecondaryBrush" Color="#FFC0C0C0" />
                     <SolidColorBrush x:Key="ToolboxErrorBrush" Color="#FFFFFF00" />
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
