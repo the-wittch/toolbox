@@ -25,6 +25,15 @@ public sealed class ThemeService
             _ => ElementTheme.Default
         };
 
+        // App-level theme so ThemeDictionaries / control styles follow Light|Dark.
+        // Leave Application.RequestedTheme alone for System (ElementTheme.Default).
+        if (Application.Current is not null && elementTheme != ElementTheme.Default)
+        {
+            Application.Current.RequestedTheme = elementTheme == ElementTheme.Light
+                ? ApplicationTheme.Light
+                : ApplicationTheme.Dark;
+        }
+
         if (window?.Content is FrameworkElement frameworkElement)
         {
             frameworkElement.RequestedTheme = elementTheme;
