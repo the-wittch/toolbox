@@ -19,6 +19,8 @@ public sealed class UpdateService
 
     /// <summary>
     /// Returns true if an updater process was started.
+    /// Must stay fast and offline: never touch the UNC share on the UI/close thread
+    /// (Directory.Exists / file scans can hang for tens of seconds and freeze close).
     /// </summary>
     public bool TryScheduleUpdateOnClose()
     {
@@ -47,16 +49,7 @@ public sealed class UpdateService
             return false;
         }
 
-        if (!Directory.Exists(source))
-        {
-            return false;
-        }
-
-        if (!HasNewerOrMissingFiles(source, destination))
-        {
-            return false;
-        }
-
+        // Do not probe the share here. The deferred script checks source + runs robocopy /XO.
         return LaunchDeferredUpdater(source, destination);
     }
 
@@ -84,8 +77,9 @@ public sealed class UpdateService
             var scriptPath = Path.Combine(Path.GetTempPath(), $"ToolboxUpdate-{pid}.cmd");
             var logPath = Path.Combine(Path.GetTempPath(), $"ToolboxUpdate-{pid}.log");
 
-            // /XO = skip files that are older/same on the destination (copy newer only).
+            // Wait for this PID to exit, then robocopy newer files only (/XO).
             // User OU/theme live in LocalAppData and are not overwritten by this sync.
+            // Keep retries low so a dead share cannot hang the updater for long.
             var script = $"""
                 @echo off
                 setlocal
@@ -96,7 +90,12 @@ public sealed class UpdateService
                   goto wait
                 )
                 echo Updating Toolbox from "{source}" to "{destination}" > "{logPath}"
-                robocopy "{source}" "{destination}" /E /XO /R:2 /W:1 /NFL /NDL /NP /XD .git >> "{logPath}" 2>&1
+                if not exist "{source}\Toolbox.exe" (
+                  echo Source Toolbox.exe not found. Skipping update. >> "{logPath}"
+                  goto done
+                )
+                robocopy "{source}" "{destination}" /E /XO /R:1 /W:1 /NFL /NDL /NP /XD .git >> "{logPath}" 2>&1
+                :done
                 del "%~f0"
                 endlocal
                 """;
@@ -118,34 +117,6 @@ public sealed class UpdateService
         {
             return false;
         }
-    }
-
-    private static bool HasNewerOrMissingFiles(string source, string destination)
-    {
-        foreach (var sourceFile in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
-        {
-            var relative = Path.GetRelativePath(source, sourceFile);
-            if (relative.StartsWith(".git", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var destFile = Path.Combine(destination, relative);
-            if (!File.Exists(destFile))
-            {
-                return true;
-            }
-
-            var sourceTime = File.GetLastWriteTimeUtc(sourceFile);
-            var destTime = File.GetLastWriteTimeUtc(destFile);
-            // 2s skew tolerance for copy/FAT/UNC timestamps
-            if (sourceTime > destTime.AddSeconds(2))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static string NormalizePath(string? path)
