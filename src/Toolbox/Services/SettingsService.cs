@@ -85,6 +85,10 @@ public sealed class SettingsService
         if (TryWrite(_adjacentSettingsPath, settings))
         {
             _writableSettingsPath = _adjacentSettingsPath;
+            // If a per-user overlay exists, keep it in sync. Load() merges the overlay
+            // on top of the install file — a stale overlay would otherwise undo UI saves
+            // (e.g. AutoUpdateOnClose toggled off next to the exe, then flipped back on).
+            SyncUserOverlayIfPresent(settings);
             return;
         }
 
@@ -101,8 +105,9 @@ public sealed class SettingsService
     public void SaveCurrent() => Save(Current);
 
     /// <summary>
-    /// Saves user-specific setup to LocalApplicationData so a shared install folder
-    /// is not overwritten when help desk runs from a file share.
+    /// Saves user-specific settings to LocalApplicationData so a shared install folder
+    /// is not overwritten when help desk runs from a file share. Overlay always wins
+    /// on the next <see cref="Load"/>.
     /// </summary>
     public void SaveUserSettings(AppSettings settings)
     {
@@ -116,6 +121,17 @@ public sealed class SettingsService
 
         // Last resort: install folder (may be shared / read-only).
         Save(settings);
+    }
+
+    private void SyncUserOverlayIfPresent(AppSettings settings)
+    {
+        if (!File.Exists(_fallbackSettingsPath) ||
+            PathsEqual(_fallbackSettingsPath, _adjacentSettingsPath))
+        {
+            return;
+        }
+
+        TryWrite(_fallbackSettingsPath, settings);
     }
 
     public void ResetToDefaults()

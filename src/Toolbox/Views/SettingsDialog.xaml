@@ -11,7 +11,7 @@
 
     <ScrollViewer MaxHeight="480" VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="12" Width="460" Padding="0,4,12,0">
-            <TextBlock Text="Changes prefer appsettings.json next to Toolbox.exe. If that folder is read-only (shared install), they save under Local AppData for your Windows user."
+            <TextBlock Text="Changes save to your per-user appsettings.json under Local AppData (overrides the install/share copy on next launch)."
                        TextWrapping="WrapWholeWords"
                        Opacity="0.75"
                        FontSize="12" />

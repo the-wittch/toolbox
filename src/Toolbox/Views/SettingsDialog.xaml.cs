@@ -56,7 +56,9 @@ public sealed partial class SettingsDialog : ContentDialog
 
         try
         {
-            App.Settings.Save(settings);
+            // User-facing settings always go to the LocalAppData overlay so they win
+            // over install/share appsettings.json on the next launch.
+            App.Settings.SaveUserSettings(settings);
             PathHint.Text = $"Saved to:\n{App.Settings.ActiveSettingsPath}";
         }
         catch (Exception ex)
