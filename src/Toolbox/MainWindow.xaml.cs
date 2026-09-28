@@ -33,7 +33,6 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         ApplyWindowChrome();
         BindCollections();
-        LoadSearchHistory();
         ApplyLabelsFromSettings();
         LoadRemoteTools();
         LoadThemeChoices();
@@ -45,21 +44,7 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
-        // Cancel in-flight LDAP/ping work so close is not held by background tasks.
-        try { _searchCts?.Cancel(); } catch { /* ignore */ }
-        try { _detailCts?.Cancel(); } catch { /* ignore */ }
-
-        try
-        {
-            App.SearchHistory.Save(_history, Math.Max(1, App.Settings.Current.Search.HistoryLimit));
-        }
-        catch
-        {
-            // Ignore persistence errors during shutdown.
-        }
-
-        // Schedules a post-exit robocopy only — must not touch the UNC share here
-        // or the window freezes while Directory.Exists / file scans hang.
+        // Copies newer files from deployment.updateSourcePath after this process exits.
         _ = App.Updater.TryScheduleUpdateOnClose();
     }
 
@@ -268,16 +253,6 @@ public sealed partial class MainWindow : Window
         SearchBox.IsEnabled = !isSearching;
     }
 
-    private void LoadSearchHistory()
-    {
-        _history.Clear();
-        var limit = Math.Max(1, App.Settings.Current.Search.HistoryLimit);
-        foreach (var query in App.SearchHistory.Load(limit))
-        {
-            _history.Add(query);
-        }
-    }
-
     private void PushHistory(string query)
     {
         var existing = _history.FirstOrDefault(h => string.Equals(h, query, StringComparison.OrdinalIgnoreCase));
@@ -292,8 +267,6 @@ public sealed partial class MainWindow : Window
         {
             _history.RemoveAt(_history.Count - 1);
         }
-
-        App.SearchHistory.Save(_history, limit);
     }
 
     private void HistoryList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
@@ -532,8 +505,7 @@ public sealed partial class MainWindow : Window
             App.Theme.Apply(themeId, this);
             try
             {
-                App.Settings.Current.Theme = ThemeService.Normalize(themeId);
-                App.Settings.SaveUserSettings(App.Settings.Current);
+                App.Settings.SaveCurrent();
             }
             catch (Exception ex)
             {

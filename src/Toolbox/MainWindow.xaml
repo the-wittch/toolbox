@@ -8,7 +8,7 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Grid x:Name="RootGrid" Background="{ThemeResource ToolboxPageBrush}">
+    <Grid x:Name="RootGrid">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -62,111 +62,88 @@
                     <TextBlock x:Name="HistoryHeader" Text="Recent searches" Style="{StaticResource MutedCaptionStyle}" Margin="0,0,0,8" />
                     <ListView x:Name="HistoryList"
                               Grid.Row="1"
-                              Style="{StaticResource ToolboxListViewStyle}"
-                              ItemContainerStyle="{StaticResource ToolboxListViewItemStyle}"
                               DoubleTapped="HistoryList_DoubleTapped"
                               SelectionMode="Single" />
                 </Grid>
             </Border>
 
             <!-- Search + results -->
-            <Border Grid.Column="1"
-                    Padding="12"
-                    CornerRadius="8"
-                    Background="{ThemeResource ToolboxCardBrush}"
-                    BorderBrush="{ThemeResource ToolboxCardStrokeBrush}"
-                    BorderThickness="1">
-                <Grid RowSpacing="10">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
+            <Grid Grid.Column="1" RowSpacing="10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
 
-                    <Grid ColumnSpacing="8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBox x:Name="SearchBox"
-                                 PlaceholderText="Computer name, description, or username"
-                                 KeyDown="SearchBox_KeyDown" />
-                        <ComboBox x:Name="PresetCombo"
-                                  Grid.Column="1"
-                                  MinWidth="140"
-                                  SelectionChanged="PresetCombo_SelectionChanged" />
-                        <Button x:Name="SearchButton"
-                                Grid.Column="2"
-                                Content="Search"
-                                Style="{StaticResource ToolboxAccentButtonStyle}"
-                                Click="SearchButton_Click" />
-                        <ProgressRing x:Name="SearchProgress"
-                                      Grid.Column="3"
-                                      Width="28"
-                                      Height="28"
-                                      IsActive="False"
-                                      Visibility="Collapsed" />
-                    </Grid>
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="SearchBox"
+                             PlaceholderText="Computer name, description, or username"
+                             KeyDown="SearchBox_KeyDown" />
+                    <ComboBox x:Name="PresetCombo"
+                              Grid.Column="1"
+                              MinWidth="140"
+                              SelectionChanged="PresetCombo_SelectionChanged" />
+                    <Button x:Name="SearchButton"
+                            Grid.Column="2"
+                            Content="Search"
+                            Style="{StaticResource ToolboxAccentButtonStyle}"
+                            Click="SearchButton_Click" />
+                    <ProgressRing x:Name="SearchProgress"
+                                  Grid.Column="3"
+                                  Width="28"
+                                  Height="28"
+                                  IsActive="False"
+                                  Visibility="Collapsed" />
+                </Grid>
 
-                    <TextBlock x:Name="ResultsHint"
-                               Grid.Row="1"
-                               Text="Double-click a row for OS info and ping results."
-                               Style="{StaticResource MutedCaptionStyle}" />
+                <TextBlock x:Name="ResultsHint"
+                           Grid.Row="1"
+                           Text="Double-click a row for OS info and ping results."
+                           Style="{StaticResource MutedCaptionStyle}" />
 
-                    <Grid Grid.Row="2">
-                        <ListView x:Name="ResultsList"
-                                  Style="{StaticResource ToolboxListViewStyle}"
-                                  ItemContainerStyle="{StaticResource ToolboxListViewItemStyle}"
-                                  SelectionMode="Single"
-                                  SelectionChanged="ResultsList_SelectionChanged"
-                                  DoubleTapped="ResultsList_DoubleTapped">
-                            <ListView.Header>
-                                <Grid Padding="12,8" ColumnSpacing="16">
+                <Grid Grid.Row="2">
+                    <ListView x:Name="ResultsList"
+                              SelectionMode="Single"
+                              SelectionChanged="ResultsList_SelectionChanged"
+                              DoubleTapped="ResultsList_DoubleTapped"
+                              IsItemClickEnabled="True">
+                        <ListView.Header>
+                            <Grid Padding="12,8" ColumnSpacing="16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="200" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Computer" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text="Description" FontWeight="SemiBold" />
+                            </Grid>
+                        </ListView.Header>
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="models:ComputerItem">
+                                <Grid Padding="4,6" ColumnSpacing="16">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="200" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="Computer"
-                                               FontWeight="SemiBold"
-                                               Foreground="{ThemeResource ToolboxTextPrimaryBrush}" />
-                                    <TextBlock Grid.Column="1"
-                                               Text="Description"
-                                               FontWeight="SemiBold"
-                                               Foreground="{ThemeResource ToolboxTextPrimaryBrush}" />
+                                    <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Column="1" Text="{x:Bind Description}" Opacity="0.85" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
                                 </Grid>
-                            </ListView.Header>
-                            <ListView.ItemTemplate>
-                                <DataTemplate x:DataType="models:ComputerItem">
-                                    <Grid Padding="4,6" ColumnSpacing="16">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="200" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="{x:Bind Name}"
-                                                   FontWeight="SemiBold"
-                                                   Foreground="{ThemeResource ToolboxTextPrimaryBrush}"
-                                                   TextWrapping="NoWrap"
-                                                   TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Grid.Column="1"
-                                                   Text="{x:Bind Description}"
-                                                   Foreground="{ThemeResource ToolboxTextSecondaryBrush}"
-                                                   TextWrapping="NoWrap"
-                                                   TextTrimming="CharacterEllipsis" />
-                                    </Grid>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
-                        <TextBlock x:Name="EmptyResultsText"
-                                   Text="No computers found. Try a different search."
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center"
-                                   Style="{StaticResource MutedCaptionStyle}"
-                                   Visibility="Collapsed" />
-                    </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                    <TextBlock x:Name="EmptyResultsText"
+                               Text="No computers found. Try a different search."
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Style="{StaticResource MutedCaptionStyle}"
+                               Visibility="Collapsed" />
                 </Grid>
-            </Border>
+            </Grid>
 
             <!-- Detail + remote -->
             <Border Grid.Column="2"
@@ -256,15 +233,10 @@
                 <TextBlock Text="Status" Style="{StaticResource MutedCaptionStyle}" Margin="0,0,0,4" />
                 <ListView x:Name="StatusList"
                           Grid.Row="1"
-                          Style="{StaticResource ToolboxListViewStyle}"
-                          ItemContainerStyle="{StaticResource ToolboxListViewItemStyle}"
                           SelectionMode="None">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:StatusLogEntry">
-                            <TextBlock Text="{x:Bind Display}"
-                                       FontFamily="Consolas"
-                                       FontSize="12"
-                                       Foreground="{ThemeResource ToolboxTextSecondaryBrush}" />
+                            <TextBlock Text="{x:Bind Display}" FontFamily="Consolas" FontSize="12" />
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>

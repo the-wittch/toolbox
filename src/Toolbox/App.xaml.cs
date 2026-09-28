@@ -18,7 +18,6 @@ public partial class App : Application
     public static ThemeService Theme { get; private set; } = null!;
     public static UpdateService Updater { get; private set; } = null!;
     public static LocalInstallService LocalInstall { get; private set; } = null!;
-    public static SearchHistoryService SearchHistory { get; private set; } = null!;
 
     public static Window? MainAppWindow => ((App)Current)._window;
 
@@ -40,7 +39,6 @@ public partial class App : Application
             Theme = new ThemeService(Settings);
             Updater = new UpdateService(Settings);
             LocalInstall = new LocalInstallService(Settings);
-            SearchHistory = new SearchHistoryService();
 
             if (!AccessControl.HasAccess())
             {
@@ -142,12 +140,63 @@ public partial class App : Application
             .AppendLine("BaseDirectory: " + AppContext.BaseDirectory)
             .AppendLine("CurrentDirectory: " + Environment.CurrentDirectory)
             .AppendLine("Executable: " + Environment.ProcessPath)
-            .AppendLine()
-            .AppendLine(ex.ToString())
-            .ToString();
+            .AppendLine("HResult: 0x" + ex.HResult.ToString("X8"))
+            .AppendLine("Packaged: " + AppDeploymentKind.IsPackaged);
 
-        File.WriteAllText(logPath, body);
+        AppendPayloadDiagnostics(body, AppContext.BaseDirectory);
+
+        body.AppendLine().AppendLine(ex.ToString());
+        for (var inner = ex.InnerException; inner is not null; inner = inner.InnerException)
+        {
+            body.AppendLine()
+                .AppendLine("--- Inner ---")
+                .AppendLine(inner.GetType().FullName + ": " + inner.Message)
+                .AppendLine("HResult: 0x" + inner.HResult.ToString("X8"));
+        }
+
+        File.WriteAllText(logPath, body.ToString());
         return logPath;
+    }
+
+    private static void AppendPayloadDiagnostics(StringBuilder body, string baseDir)
+    {
+        body.AppendLine().AppendLine("--- Payload check (unpackaged WinUI needs these) ---");
+        if (string.IsNullOrWhiteSpace(baseDir) || !Directory.Exists(baseDir))
+        {
+            body.AppendLine("BaseDirectory missing.");
+            return;
+        }
+
+        string[] required =
+        [
+            "Toolbox.exe",
+            "Toolbox.pri",
+            "resources.pri",
+            "MainWindow.xbf",
+            "App.xbf",
+            "Microsoft.UI.Xaml.dll",
+            "Microsoft.WindowsAppRuntime.Bootstrap.dll"
+        ];
+
+        foreach (var name in required)
+        {
+            var path = Path.Combine(baseDir, name);
+            body.AppendLine(File.Exists(path)
+                ? $"OK   {name} ({new FileInfo(path).Length} bytes)"
+                : $"MISS {name}");
+        }
+
+        try
+        {
+            var xbfCount = Directory.GetFiles(baseDir, "*.xbf", SearchOption.AllDirectories).Length;
+            var priCount = Directory.GetFiles(baseDir, "*.pri", SearchOption.TopDirectoryOnly).Length;
+            body.AppendLine($"xbf files: {xbfCount}");
+            body.AppendLine($"pri files (root): {priCount}");
+        }
+        catch (Exception scanEx)
+        {
+            body.AppendLine("Payload scan failed: " + scanEx.Message);
+        }
     }
 
     private static void NativeMessageBox(string text, string caption)
