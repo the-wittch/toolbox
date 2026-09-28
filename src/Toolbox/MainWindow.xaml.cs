@@ -37,6 +37,7 @@ public sealed partial class MainWindow : Window
         LoadRemoteTools();
         LoadThemeChoices();
         LoadPresets();
+        LoadSearchHistory();
         Log(App.Settings.Current.Labels.StatusReady);
         RootGrid.Loaded += MainWindow_Loaded;
         Closed += MainWindow_Closed;
@@ -44,6 +45,7 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
+        App.SearchHistory.Save(_history, Math.Max(1, App.Settings.Current.Search.HistoryLimit));
         // Copies newer files from deployment.updateSourcePath after this process exits.
         _ = App.Updater.TryScheduleUpdateOnClose();
     }
@@ -253,6 +255,16 @@ public sealed partial class MainWindow : Window
         SearchBox.IsEnabled = !isSearching;
     }
 
+    private void LoadSearchHistory()
+    {
+        _history.Clear();
+        var limit = Math.Max(1, App.Settings.Current.Search.HistoryLimit);
+        foreach (var query in App.SearchHistory.Load(limit))
+        {
+            _history.Add(query);
+        }
+    }
+
     private void PushHistory(string query)
     {
         var existing = _history.FirstOrDefault(h => string.Equals(h, query, StringComparison.OrdinalIgnoreCase));
@@ -267,6 +279,8 @@ public sealed partial class MainWindow : Window
         {
             _history.RemoveAt(_history.Count - 1);
         }
+
+        App.SearchHistory.Save(_history, limit);
     }
 
     private void HistoryList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
