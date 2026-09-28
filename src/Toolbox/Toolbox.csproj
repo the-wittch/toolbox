@@ -59,6 +59,8 @@
   <ItemGroup>
     <Content Include="Assets\**\*" Condition="Exists('Assets')" />
     <None Include="Assets\AppIcon.ico" Condition="Exists('Assets\AppIcon.ico')" />
+    <!-- Merged from App.xaml; must compile into PRI for ms-appx:///Themes/ToolboxTheme.xaml -->
+    <Page Include="Themes\ToolboxTheme.xaml" />
   </ItemGroup>
 
   <!-- Settings ship next to the exe so help desk can edit without rebuilding. -->
