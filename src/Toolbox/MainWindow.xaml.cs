@@ -38,6 +38,7 @@ public sealed partial class MainWindow : Window
         LoadThemeChoices();
         LoadPresets();
         LoadSearchHistory();
+        LoadStreamingEndpoints();
         Log(App.Settings.Current.Labels.StatusReady);
         RootGrid.Loaded += MainWindow_Loaded;
         Closed += MainWindow_Closed;
@@ -90,6 +91,7 @@ public sealed partial class MainWindow : Window
             TitleText.Text = App.Settings.Current.ProgramTitle;
             ApplyLabelsFromSettings();
             LoadThemeChoices();
+            LoadStreamingEndpoints();
             App.Theme.Apply(App.Settings.Current.Theme, this);
             Log($"First-run setup saved to {App.Settings.ActiveSettingsPath}");
         }
@@ -543,10 +545,76 @@ public sealed partial class MainWindow : Window
             LoadRemoteTools();
             LoadPresets();
             LoadThemeChoices();
+            LoadStreamingEndpoints();
             App.Theme.Apply(App.Settings.Current.Theme, this);
             BindCollections();
             Log($"Settings saved to {App.Settings.ActiveSettingsPath}");
         }
+    }
+
+    private void LoadStreamingEndpoints()
+    {
+        var visible = App.Streaming.IsTabVisible;
+        StreamingTab.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+
+        var selectedId = (StreamingEndpointCombo.SelectedItem as StreamingEndpoint)?.Id;
+        StreamingEndpointCombo.Items.Clear();
+        foreach (var endpoint in App.Streaming.GetEndpoints())
+        {
+            StreamingEndpointCombo.Items.Add(endpoint);
+        }
+
+        if (StreamingEndpointCombo.Items.Count == 0)
+        {
+            StreamingEndpointCombo.SelectedItem = null;
+            return;
+        }
+
+        StreamingEndpointCombo.SelectedItem = StreamingEndpointCombo.Items
+            .OfType<StreamingEndpoint>()
+            .FirstOrDefault(e => string.Equals(e.Id, selectedId, StringComparison.OrdinalIgnoreCase))
+            ?? StreamingEndpointCombo.Items[0];
+    }
+
+    private StreamingEndpoint? SelectedStreamingEndpoint =>
+        StreamingEndpointCombo.SelectedItem as StreamingEndpoint;
+
+    private void StreamingConnectButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedStreamingEndpoint is null)
+        {
+            Log("Select a streaming PC first.");
+            return;
+        }
+
+        Log(App.Streaming.Connect(SelectedStreamingEndpoint));
+    }
+
+    private void StreamingViewButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedStreamingEndpoint is null)
+        {
+            Log("Select a streaming PC first.");
+            return;
+        }
+
+        Log(App.Streaming.OpenViewStream(SelectedStreamingEndpoint));
+    }
+
+    private void StreamingControlButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedStreamingEndpoint is null)
+        {
+            Log("Select a streaming PC first.");
+            return;
+        }
+
+        Log(App.Streaming.OpenControlApp(SelectedStreamingEndpoint));
+    }
+
+    private void StreamingPasswordButton_Click(object sender, RoutedEventArgs e)
+    {
+        Log(App.Streaming.OpenChangePassword());
     }
 
     private void Log(string message)

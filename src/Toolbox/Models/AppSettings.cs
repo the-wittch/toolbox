@@ -17,6 +17,7 @@ public sealed class AppSettings
     public AccessControlSettings AccessControl { get; set; } = new();
     public PingSettings Ping { get; set; } = new();
     public DeploymentSettings Deployment { get; set; } = new();
+    public StreamingSettings Streaming { get; set; } = new();
     public List<RemoteToolDefinition> RemoteTools { get; set; } = new();
     public List<DetailActionDefinition> DetailActions { get; set; } = new();
     public LabelSettings Labels { get; set; } = new();
@@ -34,6 +35,32 @@ public sealed class DeploymentSettings
     public string UpdateSourcePath { get; set; } = string.Empty;
 
     public bool AutoUpdateOnClose { get; set; } = true;
+}
+
+/// <summary>
+/// Courtroom / Wowza streaming helpers. When disabled or empty, the Streaming tab is hidden.
+/// </summary>
+public sealed class StreamingSettings
+{
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Remote tool id used for Connect (defaults to sccm).</summary>
+    public string ConnectRemoteToolId { get; set; } = "sccm";
+
+    public string ChangePasswordUrl { get; set; } = string.Empty;
+
+    public List<StreamingEndpoint> Endpoints { get; set; } = new();
+}
+
+public sealed class StreamingEndpoint
+{
+    public string Id { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public string ComputerName { get; set; } = string.Empty;
+    public string ViewStreamUrl { get; set; } = string.Empty;
+    public string ControlAppUrl { get; set; } = string.Empty;
+
+    public override string ToString() => string.IsNullOrWhiteSpace(Label) ? Id : Label;
 }
 
 public sealed class LdapSettings

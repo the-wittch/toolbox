@@ -19,6 +19,7 @@ public partial class App : Application
     public static UpdateService Updater { get; private set; } = null!;
     public static LocalInstallService LocalInstall { get; private set; } = null!;
     public static SearchHistoryService SearchHistory { get; private set; } = null!;
+    public static StreamingService Streaming { get; private set; } = null!;
 
     public static Window? MainAppWindow => ((App)Current)._window;
 
@@ -61,6 +62,7 @@ public partial class App : Application
             Updater = new UpdateService(Settings);
             LocalInstall = new LocalInstallService(Settings);
             SearchHistory = new SearchHistoryService();
+            Streaming = new StreamingService(Settings, RemoteTools);
 
             if (!AccessControl.HasAccess())
             {
