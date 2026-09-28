@@ -65,7 +65,7 @@ Good for xcopy / break-glass. Staff install without admin.
 .\scripts\publish.ps1 -OutputDir '\\7jd-mon-fs1\apps\Toolbox'
 ```
 
-Publish **must** include `Toolbox.pri` (WinUI resource index). `publish.ps1` fails if it is missing — without it the app crashes at startup with `XamlParseException`.
+Publish **must** include both `Toolbox.pri` and `resources.pri` (same WinUI resource index, two names). `publish.ps1` fails if either is missing — without them the app crashes at startup with `XamlParseException`.
 
 Staff install:
 
@@ -116,7 +116,7 @@ src/Toolbox/
 | Symptom | What to check |
 |---------|----------------|
 | Silent exit / crash on start | `%LocalAppData%\Toolbox\crash.log` |
-| `XamlParseException` at `MainWindow` | Install folder has `Toolbox.pri` and `*.xbf` (republish with `publish.ps1`) |
+| `XamlParseException` at `MainWindow` | Install folder has `Toolbox.pri`, `resources.pri`, and `*.xbf` (republish with `publish.ps1`) |
 | `mt.exe` blocked / exit 1 | Unblock Windows SDK `mt.exe` in AppLocker; build **x64** |
 | XAML compiler `output.json` | Prefer VS MSBuild via `publish.ps1`, not a clean `dotnet publish` alone |
 | Settings not sticking on share | Expected — check `%LocalAppData%\Toolbox\appsettings.json` |

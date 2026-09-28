@@ -161,26 +161,48 @@ if (-not (Test-Path -LiteralPath $exe)) {
     throw "Publish finished but Toolbox.exe was not found in '$OutputDir'. See log: $logFile"
 }
 
-# Unpackaged WinUI requires the app PRI; without it MainWindow.LoadComponent throws XamlParseException.
+# Unpackaged WinUI requires a PRI next to the exe. Ship both names:
+#   Toolbox.pri   — MrtCore / AssemblyName.pri
+#   resources.pri — EnableMsixTooling / older WASDK ResourceLoader paths
 $pri = Join-Path $OutputDir 'Toolbox.pri'
-if (-not (Test-Path -LiteralPath $pri)) {
+$resourcesPri = Join-Path $OutputDir 'resources.pri'
+
+function Find-BuildPri {
     $candidates = @(
-        (Join-Path $projectDir 'bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\Toolbox.pri'),
-        (Join-Path $projectDir 'bin\x64\Release\net8.0-windows10.0.19041.0\Toolbox.pri')
+        (Join-Path $projectDir "bin\x64\$Configuration\net8.0-windows10.0.19041.0\win-x64\Toolbox.pri"),
+        (Join-Path $projectDir "bin\x64\$Configuration\net8.0-windows10.0.19041.0\win-x64\resources.pri"),
+        (Join-Path $projectDir "bin\x64\$Configuration\net8.0-windows10.0.19041.0\Toolbox.pri"),
+        (Join-Path $projectDir "bin\x64\$Configuration\net8.0-windows10.0.19041.0\resources.pri")
     )
-    $found = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    return $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+}
+
+if (-not (Test-Path -LiteralPath $pri) -and -not (Test-Path -LiteralPath $resourcesPri)) {
+    $found = Find-BuildPri
     if ($found) {
-        Write-Warning "Toolbox.pri missing from publish output; copying from build output: $found"
+        Write-Warning "PRI missing from publish output; copying from build output: $found"
         Copy-Item -LiteralPath $found -Destination $pri -Force
+        Copy-Item -LiteralPath $found -Destination $resourcesPri -Force
     }
 }
 
-if (-not (Test-Path -LiteralPath $pri)) {
+if ((Test-Path -LiteralPath $pri) -and -not (Test-Path -LiteralPath $resourcesPri)) {
+    Copy-Item -LiteralPath $pri -Destination $resourcesPri -Force
+    Write-Host "Mirrored Toolbox.pri → resources.pri"
+}
+
+if ((Test-Path -LiteralPath $resourcesPri) -and -not (Test-Path -LiteralPath $pri)) {
+    Copy-Item -LiteralPath $resourcesPri -Destination $pri -Force
+    Write-Host "Mirrored resources.pri → Toolbox.pri"
+}
+
+if (-not (Test-Path -LiteralPath $pri) -or -not (Test-Path -LiteralPath $resourcesPri)) {
     Show-LogTail -Path $logFile
     throw @"
-Publish finished but Toolbox.pri is missing from '$OutputDir'.
+Publish finished but PRI files are missing from '$OutputDir'.
+Need both: Toolbox.pri and resources.pri
 Unpackaged WinUI will crash at MainWindow with XamlParseException.
-Rebuild with the repo Directory.Build.targets (ToolboxAddProjectPriToPublish), or copy Toolbox.pri from bin\ into the publish folder.
+Rebuild with the repo Directory.Build.targets, or copy *.pri from bin\ into the publish folder.
 See: https://github.com/microsoft/WindowsAppSDK/issues/6720
 Log: $logFile
 "@
@@ -191,6 +213,7 @@ Write-Host ""
 Write-Host "Published unpackaged package to: $OutputDir"
 Write-Host "Entry point: $exe"
 Write-Host "App PRI:     $pri"
+Write-Host "Resources:   $resourcesPri"
 Write-Host "XBF files:   $xbfCount"
 Write-Host "Installer:   $(Join-Path $OutputDir 'Install-Toolbox.ps1')"
 Write-Host "Settings:    $(Join-Path $OutputDir 'appsettings.json')"
@@ -198,4 +221,4 @@ Write-Host "Build log:   $logFile"
 Write-Host ""
 Write-Host "Copy the entire folder to your file share. Preserve a customized appsettings.json when updating."
 Write-Host "Staff install (no admin): right-click Install-Toolbox.ps1 -> Run with PowerShell"
-Write-Host "If staff still crash: confirm their LocalAppData\Programs\Toolbox contains Toolbox.pri"
+Write-Host "If staff still crash: confirm LocalAppData\Programs\Toolbox has Toolbox.pri and resources.pri"
