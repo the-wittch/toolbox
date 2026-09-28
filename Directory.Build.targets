@@ -1,0 +1,69 @@
+<Project>
+  <!--
+    Workaround for WindowsAppSDK #6720:
+    Unpackaged WinUI publish generates $(AssemblyName).pri in bin/ but never
+    copies it into the publish folder. Without that PRI, LoadComponent fails
+    at runtime with a bare XamlParseException ("XAML parsing failed").
+
+    Safe no-op once the SDK wires this on the MrtCore path.
+  -->
+  <Target Name="ToolboxAddProjectPriToPublish"
+          BeforeTargets="ComputeResolvedFilesToPublishList"
+          Condition="'$(WindowsPackageType)' == 'None' or '$(WindowsPackageType)' == ''">
+    <PropertyGroup>
+      <_ToolboxPriCandidate Condition="'$(ProjectPriFullPath)' != ''">$(ProjectPriFullPath)</_ToolboxPriCandidate>
+      <_ToolboxPriCandidate Condition="'$(_ToolboxPriCandidate)' == '' and Exists('$(OutDir)$(AssemblyName).pri')">$(OutDir)$(AssemblyName).pri</_ToolboxPriCandidate>
+      <_ToolboxPriCandidate Condition="'$(_ToolboxPriCandidate)' == '' and Exists('$(OutputPath)$(AssemblyName).pri')">$(OutputPath)$(AssemblyName).pri</_ToolboxPriCandidate>
+      <_ToolboxPriFileName Condition="'$(ProjectPriFileName)' != ''">$(ProjectPriFileName)</_ToolboxPriFileName>
+      <_ToolboxPriFileName Condition="'$(_ToolboxPriFileName)' == ''">$(AssemblyName).pri</_ToolboxPriFileName>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(_ToolboxPriCandidate)' != '' and Exists('$(_ToolboxPriCandidate)')">
+      <ResolvedFileToPublish Include="$(_ToolboxPriCandidate)">
+        <RelativePath>$(_ToolboxPriFileName)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+
+    <Message Importance="high"
+             Condition="'$(_ToolboxPriCandidate)' != '' and Exists('$(_ToolboxPriCandidate)')"
+             Text="Toolbox: including app PRI in publish → $(_ToolboxPriCandidate)" />
+    <Warning Condition="'$(_ToolboxPriCandidate)' == '' or !Exists('$(_ToolboxPriCandidate)')"
+             Text="Toolbox: app PRI not found for unpackaged publish. Expected $(AssemblyName).pri under OutDir/OutputPath. Published builds may throw XamlParseException at MainWindow.InitializeComponent." />
+  </Target>
+
+  <!--
+    Belt-and-suspenders: after Publish, copy PRI + XBF from the build output
+    into PublishDir if they were still missing (VS FileSystem publish quirks).
+  -->
+  <Target Name="ToolboxCopyXamlPayloadAfterPublish"
+          AfterTargets="Publish"
+          Condition="'$(WindowsPackageType)' == 'None' or '$(WindowsPackageType)' == ''">
+    <PropertyGroup>
+      <_ToolboxPublishDir Condition="'$(PublishDir)' != ''">$(PublishDir)</_ToolboxPublishDir>
+      <_ToolboxBuildOut Condition="'$(OutDir)' != ''">$(OutDir)</_ToolboxBuildOut>
+      <_ToolboxBuildOut Condition="'$(_ToolboxBuildOut)' == ''">$(OutputPath)</_ToolboxBuildOut>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(_ToolboxPublishDir)' != '' and '$(_ToolboxBuildOut)' != ''">
+      <_ToolboxPriToCopy Include="$(_ToolboxBuildOut)$(AssemblyName).pri"
+                         Condition="Exists('$(_ToolboxBuildOut)$(AssemblyName).pri') and !Exists('$(_ToolboxPublishDir)$(AssemblyName).pri')" />
+      <_ToolboxXbfToCopy Include="$(_ToolboxBuildOut)**\*.xbf"
+                         Condition="Exists('$(_ToolboxBuildOut)')" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(_ToolboxPriToCopy)"
+          DestinationFolder="$(_ToolboxPublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="'@(_ToolboxPriToCopy)' != ''" />
+
+    <Copy SourceFiles="@(_ToolboxXbfToCopy)"
+          DestinationFiles="@(_ToolboxXbfToCopy->'$(_ToolboxPublishDir)%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true"
+          Condition="'@(_ToolboxXbfToCopy)' != ''" />
+
+    <Message Importance="high"
+             Condition="'@(_ToolboxPriToCopy)' != ''"
+             Text="Toolbox: copied missing app PRI into publish dir." />
+  </Target>
+</Project>

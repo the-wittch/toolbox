@@ -1,0 +1,11 @@
+<Project>
+  <!--
+    WindowsAppSDKSelfContained invokes mt.exe and rejects AnyCPU.
+    Visual Studio Publish frequently leaves Platform=AnyCPU even when the
+    project only lists x64 — force it for every build of this repo.
+  -->
+  <PropertyGroup>
+    <Platform Condition="'$(Platform)' == '' or '$(Platform)' == 'AnyCPU' or '$(Platform)' == 'Any CPU'">x64</Platform>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+</Project>
