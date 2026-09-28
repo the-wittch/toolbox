@@ -52,17 +52,19 @@ public sealed class SettingsService
 
     public AppSettings Load()
     {
-        AppSettings settings;
+        AppSettings baseline;
 
         if (File.Exists(_adjacentSettingsPath))
         {
-            settings = LoadFromFile(_adjacentSettingsPath) ?? new AppSettings();
+            baseline = LoadFromFile(_adjacentSettingsPath) ?? new AppSettings();
         }
         else
         {
-            settings = new AppSettings();
-            TryWrite(_adjacentSettingsPath, settings);
+            baseline = new AppSettings();
+            TryWrite(_adjacentSettingsPath, baseline);
         }
+
+        AppSettings settings = baseline;
 
         // Optional per-user overlay when the share copy is locked read-only.
         if (File.Exists(_fallbackSettingsPath) &&
@@ -71,8 +73,17 @@ public sealed class SettingsService
             var overlay = LoadFromFile(_fallbackSettingsPath);
             if (overlay is not null)
             {
-                settings = Merge(settings, overlay);
+                settings = Merge(baseline, overlay);
             }
+        }
+
+        // Older user overlays may lack new sections (e.g. streaming). Fill from the
+        // install/share file and write the upgraded overlay back when needed.
+        if (FillMissingFromBaseline(settings, baseline) &&
+            File.Exists(_fallbackSettingsPath) &&
+            !PathsEqual(_fallbackSettingsPath, _adjacentSettingsPath))
+        {
+            TryWrite(_fallbackSettingsPath, settings);
         }
 
         Current = settings;
@@ -249,9 +260,15 @@ public sealed class SettingsService
 
                 if (hasBase && hasOver)
                 {
-                    if (overProp.ValueKind is JsonValueKind.Object)
+                    if (overProp.ValueKind is JsonValueKind.Object && baseProp.ValueKind is JsonValueKind.Object)
                     {
                         MergeElements(writer, baseProp, overProp);
+                    }
+                    else if (IsEmptyOverlayValue(overProp) && !IsEmptyOverlayValue(baseProp))
+                    {
+                        // Empty overlay arrays/strings must not wipe install defaults
+                        // (common after an upgrade when the user file was saved without new sections).
+                        baseProp.WriteTo(writer);
                     }
                     else
                     {
@@ -274,11 +291,79 @@ public sealed class SettingsService
 
         if (overlay.ValueKind != JsonValueKind.Undefined && overlay.ValueKind != JsonValueKind.Null)
         {
-            overlay.WriteTo(writer);
+            if (IsEmptyOverlayValue(overlay) && !IsEmptyOverlayValue(baseline))
+            {
+                baseline.WriteTo(writer);
+            }
+            else
+            {
+                overlay.WriteTo(writer);
+            }
         }
         else
         {
             baseline.WriteTo(writer);
         }
     }
+
+    private static bool IsEmptyOverlayValue(JsonElement value) =>
+        value.ValueKind switch
+        {
+            JsonValueKind.Null => true,
+            JsonValueKind.String => string.IsNullOrWhiteSpace(value.GetString()),
+            JsonValueKind.Array => value.GetArrayLength() == 0,
+            _ => false
+        };
+
+    /// <summary>
+    /// Copies newly added install defaults into the merged settings when the user
+    /// overlay was saved before those sections existed (or only has empty placeholders).
+    /// </summary>
+    private static bool FillMissingFromBaseline(AppSettings settings, AppSettings baseline)
+    {
+        var changed = false;
+
+        settings.Streaming ??= new StreamingSettings();
+        baseline.Streaming ??= new StreamingSettings();
+
+        if ((settings.Streaming.Endpoints is null || settings.Streaming.Endpoints.Count == 0) &&
+            baseline.Streaming.Endpoints is { Count: > 0 })
+        {
+            settings.Streaming.Endpoints = baseline.Streaming.Endpoints
+                .Select(CloneEndpoint)
+                .ToList();
+            changed = true;
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.Streaming.ChangePasswordUrl) &&
+            !string.IsNullOrWhiteSpace(baseline.Streaming.ChangePasswordUrl))
+        {
+            settings.Streaming.ChangePasswordUrl = baseline.Streaming.ChangePasswordUrl;
+            changed = true;
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.Streaming.ConnectRemoteToolId) &&
+            !string.IsNullOrWhiteSpace(baseline.Streaming.ConnectRemoteToolId))
+        {
+            settings.Streaming.ConnectRemoteToolId = baseline.Streaming.ConnectRemoteToolId;
+            changed = true;
+        }
+
+        // Prefer enabling the tab when we just restored endpoints from install defaults.
+        if (changed && settings.Streaming.Endpoints.Count > 0 && !settings.Streaming.Enabled)
+        {
+            settings.Streaming.Enabled = baseline.Streaming.Enabled;
+        }
+
+        return changed;
+    }
+
+    private static StreamingEndpoint CloneEndpoint(StreamingEndpoint source) => new()
+    {
+        Id = source.Id,
+        Label = source.Label,
+        ComputerName = source.ComputerName,
+        ViewStreamUrl = source.ViewStreamUrl,
+        ControlAppUrl = source.ControlAppUrl
+    };
 }
