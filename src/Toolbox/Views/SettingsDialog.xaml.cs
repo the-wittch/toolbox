@@ -1,3 +1,4 @@
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Toolbox.Services;
 
@@ -5,9 +6,17 @@ namespace Toolbox.Views;
 
 public sealed partial class SettingsDialog : ContentDialog
 {
+    /// <summary>True when the user restored install defaults during this dialog session.</summary>
+    public bool DefaultsRestored { get; private set; }
+
     public SettingsDialog()
     {
         InitializeComponent();
+        LoadFieldsFromSettings();
+    }
+
+    private void LoadFieldsFromSettings()
+    {
         var settings = App.Settings.Current;
 
         ProgramTitleBox.Text = settings.ProgramTitle;
@@ -23,6 +32,7 @@ public sealed partial class SettingsDialog : ContentDialog
             $"Per-user overlay:\n{App.Settings.UserSettingsPath}\n\n" +
             $"Running from:\n{AppContext.BaseDirectory}";
 
+        ThemeBox.Items.Clear();
         foreach (var (id, label) in App.Theme.GetThemeChoices())
         {
             ThemeBox.Items.Add(new ComboBoxItem { Content = label, Tag = id });
@@ -33,6 +43,23 @@ public sealed partial class SettingsDialog : ContentDialog
             .OfType<ComboBoxItem>()
             .FirstOrDefault(i => string.Equals(i.Tag?.ToString(), current, StringComparison.OrdinalIgnoreCase))
             ?? ThemeBox.Items.OfType<ComboBoxItem>().FirstOrDefault();
+    }
+
+    private void RestoreDefaultsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!App.Settings.RestoreFromInstallDefaults())
+        {
+            PathHint.Text =
+                $"Could not read install defaults from:\n{App.Settings.AdjacentSettingsPath}\n\n" +
+                "Republish/reinstall so that file includes the latest sections (streaming, etc.).";
+            return;
+        }
+
+        DefaultsRestored = true;
+        LoadFieldsFromSettings();
+        PathHint.Text =
+            $"Restored from install defaults and saved to:\n{App.Settings.ActiveSettingsPath}\n\n" +
+            "Click Save if you still want to edit fields, or Cancel to close. Streaming and other install sections are now in your user settings.";
     }
 
     private void ContentDialog_PrimaryButtonClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)

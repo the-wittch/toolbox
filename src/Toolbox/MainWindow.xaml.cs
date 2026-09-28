@@ -537,7 +537,7 @@ public sealed partial class MainWindow : Window
             XamlRoot = RootGrid.XamlRoot
         };
         var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary)
+        if (result == ContentDialogResult.Primary || dialog.DefaultsRestored)
         {
             Title = App.Settings.Current.ProgramTitle;
             TitleText.Text = App.Settings.Current.ProgramTitle;
@@ -548,7 +548,14 @@ public sealed partial class MainWindow : Window
             LoadStreamingEndpoints();
             App.Theme.Apply(App.Settings.Current.Theme, this);
             BindCollections();
-            Log($"Settings saved to {App.Settings.ActiveSettingsPath}");
+            if (result == ContentDialogResult.Primary)
+            {
+                Log($"Settings saved to {App.Settings.ActiveSettingsPath}");
+            }
+            else
+            {
+                Log($"Restored install defaults to {App.Settings.ActiveSettingsPath}");
+            }
         }
     }
 

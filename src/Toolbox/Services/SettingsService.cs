@@ -145,10 +145,43 @@ public sealed class SettingsService
         TryWrite(_fallbackSettingsPath, settings);
     }
 
+    /// <summary>
+    /// Replaces the in-memory settings (and user overlay) with the install/share
+    /// <c>appsettings.json</c>. Keeps <see cref="AppSettings.SetupCompleted"/> true
+    /// so first-run does not reappear. Returns false if the install file is missing.
+    /// </summary>
+    public bool RestoreFromInstallDefaults()
+    {
+        var install = LoadFromFile(_adjacentSettingsPath);
+        if (install is null)
+        {
+            return false;
+        }
+
+        install.SetupCompleted = true;
+        install.Streaming ??= new StreamingSettings();
+        install.Streaming.Endpoints ??= new List<StreamingEndpoint>();
+
+        Current = install;
+        if (TryWrite(_fallbackSettingsPath, Current))
+        {
+            _writableSettingsPath = _fallbackSettingsPath;
+            return true;
+        }
+
+        // No separate overlay path (running from install folder) — write adjacent if possible.
+        if (TryWrite(_adjacentSettingsPath, Current))
+        {
+            _writableSettingsPath = _adjacentSettingsPath;
+            return true;
+        }
+
+        return false;
+    }
+
     public void ResetToDefaults()
     {
-        Current = new AppSettings();
-        Save(Current);
+        _ = RestoreFromInstallDefaults();
     }
 
     public static bool LooksLikePlaceholderOu(string? rootOu)
@@ -323,36 +356,37 @@ public sealed class SettingsService
     {
         var changed = false;
 
-        settings.Streaming ??= new StreamingSettings();
-        baseline.Streaming ??= new StreamingSettings();
+        var streaming = settings.Streaming ??= new StreamingSettings();
+        var baselineStreaming = baseline.Streaming ??= new StreamingSettings();
+        streaming.Endpoints ??= new List<StreamingEndpoint>();
+        baselineStreaming.Endpoints ??= new List<StreamingEndpoint>();
 
-        if ((settings.Streaming.Endpoints is null || settings.Streaming.Endpoints.Count == 0) &&
-            baseline.Streaming.Endpoints is { Count: > 0 })
+        if (streaming.Endpoints.Count == 0 && baselineStreaming.Endpoints.Count > 0)
         {
-            settings.Streaming.Endpoints = baseline.Streaming.Endpoints
+            streaming.Endpoints = baselineStreaming.Endpoints
                 .Select(CloneEndpoint)
                 .ToList();
             changed = true;
         }
 
-        if (string.IsNullOrWhiteSpace(settings.Streaming.ChangePasswordUrl) &&
-            !string.IsNullOrWhiteSpace(baseline.Streaming.ChangePasswordUrl))
+        if (string.IsNullOrWhiteSpace(streaming.ChangePasswordUrl) &&
+            !string.IsNullOrWhiteSpace(baselineStreaming.ChangePasswordUrl))
         {
-            settings.Streaming.ChangePasswordUrl = baseline.Streaming.ChangePasswordUrl;
+            streaming.ChangePasswordUrl = baselineStreaming.ChangePasswordUrl;
             changed = true;
         }
 
-        if (string.IsNullOrWhiteSpace(settings.Streaming.ConnectRemoteToolId) &&
-            !string.IsNullOrWhiteSpace(baseline.Streaming.ConnectRemoteToolId))
+        if (string.IsNullOrWhiteSpace(streaming.ConnectRemoteToolId) &&
+            !string.IsNullOrWhiteSpace(baselineStreaming.ConnectRemoteToolId))
         {
-            settings.Streaming.ConnectRemoteToolId = baseline.Streaming.ConnectRemoteToolId;
+            streaming.ConnectRemoteToolId = baselineStreaming.ConnectRemoteToolId;
             changed = true;
         }
 
         // Prefer enabling the tab when we just restored endpoints from install defaults.
-        if (changed && settings.Streaming.Endpoints.Count > 0 && !settings.Streaming.Enabled)
+        if (changed && streaming.Endpoints.Count > 0 && !streaming.Enabled)
         {
-            settings.Streaming.Enabled = baseline.Streaming.Enabled;
+            streaming.Enabled = baselineStreaming.Enabled;
         }
 
         return changed;

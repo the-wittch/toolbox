@@ -47,6 +47,19 @@
                           OffContent="Off"
                           OnContent="On" />
 
+            <Border Height="1" Background="{ThemeResource ToolboxDividerBrush}" Margin="0,4" />
+
+            <TextBlock Text="Reset"
+                       FontWeight="SemiBold" />
+            <TextBlock Text="Replace your Local AppData settings with the install/share appsettings.json (adds missing sections like streaming)."
+                       TextWrapping="WrapWholeWords"
+                       Opacity="0.75"
+                       FontSize="12" />
+            <Button x:Name="RestoreDefaultsButton"
+                    Content="Restore install defaults"
+                    HorizontalAlignment="Stretch"
+                    Click="RestoreDefaultsButton_Click" />
+
             <TextBlock x:Name="PathHint" FontSize="11" Opacity="0.65" TextWrapping="WrapWholeWords" />
         </StackPanel>
     </ScrollViewer>
