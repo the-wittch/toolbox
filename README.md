@@ -1,5 +1,8 @@
 # Toolbox
 
+[![Release](https://github.com/the-wittch/toolbox/actions/workflows/release.yml/badge.svg)](https://github.com/the-wittch/toolbox/actions/workflows/release.yml)
+[![Dependabot Updates](https://github.com/the-wittch/toolbox/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/the-wittch/toolbox/actions/workflows/dependabot/dependabot-updates)
+
 WinUI 3 help-desk utility for Active Directory computer search, ping/OS detail, LAPS copy, and launching remote tools (SCCM Remote Viewer, etc.).
 
 Built for internal IT use: unpackaged share install **or** signed MSIX via SCCM.
