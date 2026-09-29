@@ -12,7 +12,7 @@
 
 .EXAMPLE
   .\scripts\publish.ps1
-  .\scripts\publish.ps1 -OutputDir '\\7jd-mon-fs1\apps\Toolbox'
+  .\scripts\publish.ps1 -OutputDir '\\fileserver\apps\Toolbox'
 #>
 param(
     [string]$OutputDir = (Join-Path $PSScriptRoot '..\dist\Toolbox'),

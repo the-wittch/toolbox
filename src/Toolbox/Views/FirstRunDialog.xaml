@@ -33,7 +33,7 @@
 
             <TextBox x:Name="UpdateSourceBox"
                      Header="Install / update source path"
-                     PlaceholderText="\\7jd-mon-fs1\apps\Toolbox"
+                     PlaceholderText="\\fileserver\apps\Toolbox"
                      TextWrapping="Wrap"
                      AcceptsReturn="False" />
 

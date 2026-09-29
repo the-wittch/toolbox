@@ -16,6 +16,7 @@ Built for internal IT use: unpackaged share install **or** signed MSIX via SCCM.
 - LDAP computer search with presets and history
 - Detail pane: OS, last user, ping, LAPS password copy
 - Configurable remote tools from `appsettings.json`
+- Optional Streaming tab (endpoints configured in settings)
 - Optional AD group access control
 - First-run setup for OU / prefixes / update path
 - Per-user settings overlay under `%LocalAppData%\Toolbox`
@@ -39,6 +40,7 @@ dotnet build .\src\Toolbox\Toolbox.csproj -c Debug -p:Platform=x64
 ## Configuration
 
 Defaults ship in `src/Toolbox/appsettings.json` (copied next to `Toolbox.exe` on publish).
+Public defaults use placeholders only — put org-specific LDAP roots, UNC shares, and streaming URLs on your **install/share copy** or in Settings (saved under `%LocalAppData%\Toolbox`).
 
 | Area | Purpose |
 |------|---------|
@@ -47,6 +49,7 @@ Defaults ship in `src/Toolbox/appsettings.json` (copied next to `Toolbox.exe` on
 | `search.presets` | Quick filters |
 | `accessControl` | Optional AD group gate |
 | `deployment.updateSourcePath` | Share path for unpackaged auto-update |
+| `streaming` | Optional Streaming tab endpoints |
 | `remoteTools` | Paths/args for remote consoles |
 
 **Write rules**
@@ -62,7 +65,7 @@ Good for xcopy / break-glass. Staff install without admin.
 ```powershell
 .\scripts\publish.ps1
 # or straight to the share:
-.\scripts\publish.ps1 -OutputDir '\\7jd-mon-fs1\apps\Toolbox'
+.\scripts\publish.ps1 -OutputDir '\\fileserver\apps\Toolbox'
 ```
 
 Publish **must** include both `Toolbox.pri` and `resources.pri` (same WinUI resource index, two names). `publish.ps1` fails if either is missing — without them the app crashes at startup with `XamlParseException`.
@@ -70,7 +73,7 @@ Publish **must** include both `Toolbox.pri` and `resources.pri` (same WinUI reso
 Staff install:
 
 ```powershell
-\\7jd-mon-fs1\apps\Toolbox\Install-Toolbox.ps1
+\\fileserver\apps\Toolbox\Install-Toolbox.ps1
 ```
 
 That copies into `%LocalAppData%\Programs\Toolbox`, creates a Desktop shortcut, and can set auto-update from the share on close.
@@ -91,12 +94,30 @@ That copies into `%LocalAppData%\Programs\Toolbox`, creates a Desktop shortcut, 
 
 Packaged installs are updated only through SCCM. Do not use `Install-Toolbox.ps1` or robocopy auto-update for those machines.
 
+## GitHub Releases (automated)
+
+Push a version tag to build release assets on `windows-latest`:
+
+```powershell
+# Bump Version in Toolbox.csproj + Package.appxmanifest Identity first, then:
+git tag v2.0.1
+git push origin v2.0.1
+```
+
+The [Release](.github/workflows/release.yml) workflow runs `scripts/publish.ps1` and `scripts/publish-msix.ps1`, then attaches:
+
+- `Toolbox-<tag>-win-x64.zip` — unpackaged self-contained folder (unzip / robocopy to your share)
+- `*.msix` — unsigned package (sign locally before SCCM)
+
+You can also run the workflow manually from the Actions tab (`workflow_dispatch`) to produce artifacts without creating a release.
+
 ## Project layout
 
 ```
 Toolbox.sln
 Directory.Build.props / .targets   # force x64; unpackaged PRI publish workaround
 LICENSE                            # MIT
+.github/workflows/release.yml      # tag → zip + MSIX GitHub Release
 scripts/
   publish.ps1                      # unpackaged self-contained folder
   publish-msix.ps1                  # MSIX for SCCM
@@ -105,7 +126,7 @@ src/Toolbox/
   App.xaml(.cs)                    # startup, resources, crash logging
   MainWindow.xaml(.cs)             # main UI
   Package.appxmanifest             # MSIX identity
-  appsettings.json                 # defaults / share hints
+  appsettings.json                 # public defaults (placeholders)
   Services/                        # LDAP, ping, settings, update, install
   Views/                           # first-run, settings, local-install dialogs
   Assets/                          # icons

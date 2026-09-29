@@ -31,7 +31,7 @@ public sealed partial class FirstRunDialog : ContentDialog
         var updateSource = UpdateService.SuggestUpdateSourcePath(settings.Deployment);
         UpdateSourceBox.Text = updateSource;
         UpdateSourceBox.PlaceholderText = string.IsNullOrWhiteSpace(updateSource)
-            ? @"\\7jd-mon-fs1\apps\Toolbox"
+            ? @"\\fileserver\apps\Toolbox"
             : updateSource;
         AutoUpdateToggle.IsOn = settings.Deployment.AutoUpdateOnClose;
 

@@ -53,6 +53,13 @@ Package.StoreAssociation.xml
 /dist/
 /out/
 
+# Secrets / local overlays (never commit)
+.env
+.env.*
+secrets.json
+**/appsettings.*.local.json
+*.pfx
+
 # OS junk
 Thumbs.db
 Desktop.ini

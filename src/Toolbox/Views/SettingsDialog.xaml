@@ -75,9 +75,9 @@
                 <Button Content="Add endpoint" Click="StreamingAddEndpoint_Click" />
                 <Button Content="Remove selected" Click="StreamingRemoveEndpoint_Click" />
             </StackPanel>
-            <TextBox x:Name="StreamingEndpointIdBox" Header="Endpoint id" PlaceholderText="st-jd7-1" />
-            <TextBox x:Name="StreamingEndpointLabelBox" Header="Label" PlaceholderText="ST-JD7-1" />
-            <TextBox x:Name="StreamingEndpointComputerBox" Header="Computer name" PlaceholderText="ST-JD7-1" />
+            <TextBox x:Name="StreamingEndpointIdBox" Header="Endpoint id" PlaceholderText="stream-1" />
+            <TextBox x:Name="StreamingEndpointLabelBox" Header="Label" PlaceholderText="Stream 1" />
+            <TextBox x:Name="StreamingEndpointComputerBox" Header="Computer name" PlaceholderText="STREAM-PC-1" />
             <TextBox x:Name="StreamingEndpointViewUrlBox" Header="View stream URL" TextWrapping="Wrap" />
             <TextBox x:Name="StreamingEndpointControlUrlBox" Header="Control app URL" TextWrapping="Wrap" />
 

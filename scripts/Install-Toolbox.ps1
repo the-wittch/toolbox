@@ -9,11 +9,11 @@
   Creates a Desktop shortcut, and optionally launches the app.
 
   Give staff this script (or a shortcut to it) from the file share. Example:
-    \\7jd-mon-fs1\apps\Toolbox\Install-Toolbox.ps1
+    \\fileserver\apps\Toolbox\Install-Toolbox.ps1
 
 .EXAMPLE
   .\Install-Toolbox.ps1
-  .\Install-Toolbox.ps1 -SourcePath '\\7jd-mon-fs1\apps\Toolbox'
+  .\Install-Toolbox.ps1 -SourcePath '\\fileserver\apps\Toolbox'
   .\Install-Toolbox.ps1 -NoLaunch
 #>
 param(
@@ -38,12 +38,7 @@ function Resolve-SourcePath {
         return $scriptDir
     }
 
-    $defaultShare = '\\7jd-mon-fs1\apps\Toolbox'
-    if (Test-Path -LiteralPath (Join-Path $defaultShare 'Toolbox.exe')) {
-        return $defaultShare
-    }
-
-    throw "Could not find Toolbox.exe. Pass -SourcePath to the published folder (for example \\7jd-mon-fs1\apps\Toolbox)."
+    throw "Could not find Toolbox.exe. Pass -SourcePath to the published folder (for example \\fileserver\apps\Toolbox)."
 }
 
 $source = Resolve-SourcePath -Requested $SourcePath
