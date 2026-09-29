@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentDialog
+    x:Class="Toolbox.Views.FirstRunDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Welcome to Toolbox"
+    PrimaryButtonText="Save and continue"
+    DefaultButton="Primary"
+    PrimaryButtonClick="ContentDialog_PrimaryButtonClick">
+
+    <ScrollViewer MaxHeight="520" VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="12" Width="480" Padding="0,4,12,0">
+            <TextBlock TextWrapping="WrapWholeWords" Opacity="0.82">
+                Defaults below come from the install appsettings.json (edit that file on the share
+                to pre-fill hints for staff). Change anything for your site, then continue.
+                Your choices save under Local AppData so the shared folder is not overwritten.
+            </TextBlock>
+
+            <TextBox x:Name="ProgramTitleBox"
+                     Header="Program title" />
+
+            <TextBox x:Name="RootOuBox"
+                     Header="LDAP root OU (required)"
+                     TextWrapping="Wrap"
+                     AcceptsReturn="False" />
+
+            <TextBox x:Name="PrefixesBox"
+                     Header="Computer-name prefixes (comma-separated)" />
+
+            <ComboBox x:Name="ThemeBox"
+                      Header="Theme"
+                      HorizontalAlignment="Stretch" />
+
+            <TextBox x:Name="UpdateSourceBox"
+                     Header="Install / update source path"
+                     PlaceholderText="\\fileserver\apps\Toolbox"
+                     TextWrapping="Wrap"
+                     AcceptsReturn="False" />
+
+            <ToggleSwitch x:Name="AutoUpdateToggle"
+                          Header="Auto-update from that path when Toolbox closes"
+                          OffContent="Off"
+                          OnContent="On" />
+
+            <TextBlock TextWrapping="WrapWholeWords" FontSize="12" Opacity="0.7">
+                Preferred install location: %LOCALAPPDATA%\Programs\Toolbox (use Install-Toolbox.ps1
+                on the share, or the in-app install prompt). On close, newer files sync from the
+                source path above. Per-user OU/theme stay in Local AppData.
+            </TextBlock>
+
+            <TextBlock x:Name="ErrorText"
+                       Foreground="{ThemeResource ToolboxErrorBrush}"
+                       TextWrapping="WrapWholeWords"
+                       Visibility="Collapsed" />
+
+            <TextBlock x:Name="PathHint"
+                       FontSize="11"
+                       Opacity="0.65"
+                       TextWrapping="WrapWholeWords" />
+        </StackPanel>
+    </ScrollViewer>
+</ContentDialog>

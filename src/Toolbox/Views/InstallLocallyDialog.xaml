@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentDialog
+    x:Class="Toolbox.Views.InstallLocallyDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Install Toolbox on this PC"
+    PrimaryButtonText="Install and open"
+    SecondaryButtonText="Continue without installing"
+    DefaultButton="Primary"
+    PrimaryButtonClick="ContentDialog_PrimaryButtonClick">
+
+    <StackPanel Spacing="12" Width="480">
+        <TextBlock TextWrapping="Wrap">
+            Toolbox is running from a network location. For best performance and auto-update,
+            install a personal copy on this PC:
+        </TextBlock>
+
+        <TextBlock x:Name="DestinationText" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" />
+
+        <TextBlock TextWrapping="Wrap" Opacity="0.75" FontSize="12">
+            This copies files to your profile, creates a Desktop shortcut, and opens the local copy.
+            Your site settings are saved under Local AppData. Closing the local app can pull newer
+            files from the network install folder.
+        </TextBlock>
+
+        <TextBlock x:Name="ErrorText"
+                   Foreground="{ThemeResource ToolboxErrorBrush}"
+                   TextWrapping="Wrap"
+                   Visibility="Collapsed" />
+    </StackPanel>
+</ContentDialog>

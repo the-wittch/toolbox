@@ -1,0 +1,81 @@
+<Project>
+
+  <Target Name="ToolboxAddProjectPriToPublish"
+          BeforeTargets="ComputeResolvedFilesToPublishList"
+          Condition="'$(WindowsPackageType)' == 'None' or '$(WindowsPackageType)' == ''">
+    <PropertyGroup>
+      <_ToolboxPriCandidate Condition="'$(ProjectPriFullPath)' != ''">$(ProjectPriFullPath)</_ToolboxPriCandidate>
+      <_ToolboxPriCandidate Condition="'$(_ToolboxPriCandidate)' == '' and Exists('$(OutDir)$(AssemblyName).pri')">$(OutDir)$(AssemblyName).pri</_ToolboxPriCandidate>
+      <_ToolboxPriCandidate Condition="'$(_ToolboxPriCandidate)' == '' and Exists('$(OutputPath)$(AssemblyName).pri')">$(OutputPath)$(AssemblyName).pri</_ToolboxPriCandidate>
+      <_ToolboxPriCandidate Condition="'$(_ToolboxPriCandidate)' == '' and Exists('$(OutDir)resources.pri')">$(OutDir)resources.pri</_ToolboxPriCandidate>
+      <_ToolboxPriCandidate Condition="'$(_ToolboxPriCandidate)' == '' and Exists('$(OutputPath)resources.pri')">$(OutputPath)resources.pri</_ToolboxPriCandidate>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(_ToolboxPriCandidate)' != '' and Exists('$(_ToolboxPriCandidate)')">
+      <ResolvedFileToPublish Include="$(_ToolboxPriCandidate)">
+        <RelativePath>$(AssemblyName).pri</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+      <ResolvedFileToPublish Include="$(_ToolboxPriCandidate)">
+        <RelativePath>resources.pri</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+
+    <Message Importance="high"
+             Condition="'$(_ToolboxPriCandidate)' != '' and Exists('$(_ToolboxPriCandidate)')"
+             Text="Toolbox: including app PRI as $(AssemblyName).pri + resources.pri → $(_ToolboxPriCandidate)" />
+    <Warning Condition="'$(_ToolboxPriCandidate)' == '' or !Exists('$(_ToolboxPriCandidate)')"
+             Text="Toolbox: app PRI not found for unpackaged publish. Expected $(AssemblyName).pri or resources.pri under OutDir/OutputPath. Published builds may throw XamlParseException at MainWindow.InitializeComponent." />
+  </Target>
+
+  <Target Name="ToolboxCopyXamlPayloadAfterPublish"
+          AfterTargets="Publish"
+          Condition="'$(WindowsPackageType)' == 'None' or '$(WindowsPackageType)' == ''">
+    <PropertyGroup>
+      <_ToolboxPublishDir Condition="'$(PublishDir)' != ''">$(PublishDir)</_ToolboxPublishDir>
+      <_ToolboxBuildOut Condition="'$(OutDir)' != ''">$(OutDir)</_ToolboxBuildOut>
+      <_ToolboxBuildOut Condition="'$(_ToolboxBuildOut)' == ''">$(OutputPath)</_ToolboxBuildOut>
+      <_ToolboxSourcePri Condition="Exists('$(_ToolboxBuildOut)$(AssemblyName).pri')">$(_ToolboxBuildOut)$(AssemblyName).pri</_ToolboxSourcePri>
+      <_ToolboxSourcePri Condition="'$(_ToolboxSourcePri)' == '' and Exists('$(_ToolboxBuildOut)resources.pri')">$(_ToolboxBuildOut)resources.pri</_ToolboxSourcePri>
+      <_ToolboxSourcePri Condition="'$(_ToolboxSourcePri)' == '' and Exists('$(_ToolboxPublishDir)$(AssemblyName).pri')">$(_ToolboxPublishDir)$(AssemblyName).pri</_ToolboxSourcePri>
+      <_ToolboxSourcePri Condition="'$(_ToolboxSourcePri)' == '' and Exists('$(_ToolboxPublishDir)resources.pri')">$(_ToolboxPublishDir)resources.pri</_ToolboxSourcePri>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(_ToolboxPublishDir)' != ''">
+      <_ToolboxXbfToCopy Include="$(_ToolboxBuildOut)**\*.xbf"
+                         Condition="'$(_ToolboxBuildOut)' != '' and Exists('$(_ToolboxBuildOut)')" />
+    </ItemGroup>
+
+    <Copy SourceFiles="$(_ToolboxSourcePri)"
+          DestinationFiles="$(_ToolboxPublishDir)$(AssemblyName).pri"
+          SkipUnchangedFiles="true"
+          Condition="'$(_ToolboxSourcePri)' != '' and !Exists('$(_ToolboxPublishDir)$(AssemblyName).pri')" />
+
+    <Copy SourceFiles="$(_ToolboxSourcePri)"
+          DestinationFiles="$(_ToolboxPublishDir)resources.pri"
+          SkipUnchangedFiles="true"
+          Condition="'$(_ToolboxSourcePri)' != '' and !Exists('$(_ToolboxPublishDir)resources.pri')" />
+
+    <Copy SourceFiles="$(_ToolboxPublishDir)$(AssemblyName).pri"
+          DestinationFiles="$(_ToolboxPublishDir)resources.pri"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(_ToolboxPublishDir)$(AssemblyName).pri') and !Exists('$(_ToolboxPublishDir)resources.pri')" />
+
+    <Copy SourceFiles="$(_ToolboxPublishDir)resources.pri"
+          DestinationFiles="$(_ToolboxPublishDir)$(AssemblyName).pri"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(_ToolboxPublishDir)resources.pri') and !Exists('$(_ToolboxPublishDir)$(AssemblyName).pri')" />
+
+    <Copy SourceFiles="@(_ToolboxXbfToCopy)"
+          DestinationFiles="@(_ToolboxXbfToCopy->'$(_ToolboxPublishDir)%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true"
+          Condition="'@(_ToolboxXbfToCopy)' != ''" />
+
+    <Message Importance="high"
+             Condition="Exists('$(_ToolboxPublishDir)$(AssemblyName).pri') and Exists('$(_ToolboxPublishDir)resources.pri')"
+             Text="Toolbox: publish PRI payload OK ($(AssemblyName).pri + resources.pri)." />
+    <Warning Condition="!Exists('$(_ToolboxPublishDir)$(AssemblyName).pri') or !Exists('$(_ToolboxPublishDir)resources.pri')"
+             Text="Toolbox: publish dir still missing PRI files under $(_ToolboxPublishDir). Expected $(AssemblyName).pri and resources.pri." />
+  </Target>
+</Project>

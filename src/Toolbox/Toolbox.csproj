@@ -1,0 +1,85 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>Toolbox</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <Platforms>x64</Platforms>
+    <Platform>x64</Platform>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <WindowsPackageType Condition="'$(WindowsPackageType)' == ''">None</WindowsPackageType>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+    <GenerateAppxPackageOnBuild Condition="'$(GenerateAppxPackageOnBuild)' == ''">false</GenerateAppxPackageOnBuild>
+
+    <WindowsAppSDKSelfContained Condition="'$(Configuration)' == 'Release'">true</WindowsAppSDKSelfContained>
+
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>portable</DebugType>
+
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+    <AssemblyName>Toolbox</AssemblyName>
+    <Product>Toolbox</Product>
+    <Company>Wittch</Company>
+    <Authors>the-wittch</Authors>
+    <Copyright>Copyright © 2026 Wittch</Copyright>
+    <Description>Help desk Active Directory computer search and remote tools</Description>
+    <Version>2.0.0</Version>
+    <AssemblyVersion>2.0.0.0</AssemblyVersion>
+    <FileVersion>2.0.0.0</FileVersion>
+    <InformationalVersion>2.0.0</InformationalVersion>
+    <NeutralLanguage>en-US</NeutralLanguage>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
+    <PublishReadyToRun>true</PublishReadyToRun>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\**\*" Condition="Exists('Assets')" />
+    <None Include="Assets\AppIcon.ico" Condition="Exists('Assets\AppIcon.ico')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
+
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.9169" />
+    <PackageReference Include="System.DirectoryServices" Version="8.0.0" />
+    <PackageReference Include="System.DirectoryServices.AccountManagement" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
+    <Manifest Include="$(ApplicationManifest)" />
+  </ItemGroup>
+
+  <Target Name="ForceWindowsAppSdkManifestTool"
+          BeforeTargets="CreateWinRTRegistration;GetNewAppManifestValues;GetExtractMicrosoftWindowsAppSDKMsixFilesInputs">
+    <PropertyGroup>
+      <Platform>x64</Platform>
+      <PlatformTarget>x64</PlatformTarget>
+      <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' and '$(Configuration)' == 'Release'">win-x64</RuntimeIdentifier>
+      <_ToolboxMtExe>$(NuGetPackageRoot)microsoft.windows.sdk.buildtools\10.0.26100.9169\bin\10.0.26100.0\x64\mt.exe</_ToolboxMtExe>
+      <_ToolboxMtExe Condition="!Exists('$(_ToolboxMtExe)')">$(NuGetPackageRoot)microsoft.windows.sdk.buildtools\10.0.26100.9169\bin\10.0.26100.0\x86\mt.exe</_ToolboxMtExe>
+      <ManifestTool Condition="Exists('$(_ToolboxMtExe)')">$(_ToolboxMtExe)</ManifestTool>
+    </PropertyGroup>
+    <Message Importance="high"
+             Text="Toolbox WASDK merge: Platform=$(Platform); RID=$(RuntimeIdentifier); ManifestTool=$(ManifestTool); PackageType=$(WindowsPackageType)" />
+  </Target>
+</Project>

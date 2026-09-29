@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentDialog
+    x:Class="Toolbox.Views.SettingsDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Settings"
+    PrimaryButtonText="Save"
+    SecondaryButtonText="Cancel"
+    DefaultButton="Primary"
+    PrimaryButtonClick="ContentDialog_PrimaryButtonClick">
+
+    <ScrollViewer MaxHeight="560" VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="12" Width="460" Padding="0,4,12,0">
+            <TextBlock Text="Changes save to your per-user appsettings.json under Local AppData (overrides the install/share copy on next launch)."
+                       TextWrapping="WrapWholeWords"
+                       Opacity="0.75"
+                       FontSize="12" />
+
+            <TextBox x:Name="ProgramTitleBox" Header="Program title" />
+            <TextBox x:Name="RootOuBox" Header="LDAP root OU" TextWrapping="Wrap" AcceptsReturn="False" />
+            <TextBox x:Name="PrefixesBox"
+                     Header="Computer-name prefixes (comma-separated)"
+                     PlaceholderText="PC-, WS-" />
+
+            <ComboBox x:Name="ThemeBox" Header="Theme" HorizontalAlignment="Stretch" />
+
+            <NumberBox x:Name="PingTimeoutBox"
+                       Header="Ping timeout (ms)"
+                       Minimum="500"
+                       Maximum="30000"
+                       SmallChange="500"
+                       SpinButtonPlacementMode="Inline" />
+
+            <ToggleSwitch x:Name="AccessControlToggle" Header="Require AD group membership" OffContent="Off" OnContent="On" />
+            <TextBox x:Name="AllowedGroupsBox"
+                     Header="Allowed groups (comma-separated)"
+                     TextWrapping="Wrap"
+                     AcceptsReturn="True"
+                     Height="72" />
+
+            <TextBox x:Name="UpdateSourceBox"
+                     Header="Install / update source path"
+                     PlaceholderText="\\server\apps\Toolbox"
+                     TextWrapping="Wrap" />
+            <ToggleSwitch x:Name="AutoUpdateToggle"
+                          Header="Auto-update on close"
+                          OffContent="Off"
+                          OnContent="On" />
+
+            <Border Height="1" Background="{ThemeResource ToolboxDividerBrush}" Margin="0,4" />
+
+            <TextBlock Text="Streaming"
+                       FontWeight="SemiBold" />
+            <TextBlock Text="Shown on the Streaming tab. Leave endpoints empty to hide the tab."
+                       TextWrapping="WrapWholeWords"
+                       Opacity="0.75"
+                       FontSize="12" />
+            <ToggleSwitch x:Name="StreamingEnabledToggle"
+                          Header="Enable Streaming tab"
+                          OffContent="Off"
+                          OnContent="On" />
+            <TextBox x:Name="StreamingConnectToolBox"
+                     Header="Connect remote tool id"
+                     PlaceholderText="sccm" />
+            <TextBox x:Name="StreamingPasswordUrlBox"
+                     Header="Change password URL"
+                     TextWrapping="Wrap" />
+
+            <TextBlock Text="Endpoints" Opacity="0.75" FontSize="12" />
+            <ListView x:Name="StreamingEndpointsList"
+                      Height="100"
+                      SelectionMode="Single"
+                      SelectionChanged="StreamingEndpointsList_SelectionChanged" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Add endpoint" Click="StreamingAddEndpoint_Click" />
+                <Button Content="Remove selected" Click="StreamingRemoveEndpoint_Click" />
+            </StackPanel>
+            <TextBox x:Name="StreamingEndpointIdBox" Header="Endpoint id" PlaceholderText="stream-1" />
+            <TextBox x:Name="StreamingEndpointLabelBox" Header="Label" PlaceholderText="Stream 1" />
+            <TextBox x:Name="StreamingEndpointComputerBox" Header="Computer name" PlaceholderText="STREAM-PC-1" />
+            <TextBox x:Name="StreamingEndpointViewUrlBox" Header="View stream URL" TextWrapping="Wrap" />
+            <TextBox x:Name="StreamingEndpointControlUrlBox" Header="Control app URL" TextWrapping="Wrap" />
+
+            <Border Height="1" Background="{ThemeResource ToolboxDividerBrush}" Margin="0,4" />
+
+            <TextBlock Text="Reset"
+                       FontWeight="SemiBold" />
+            <TextBlock Text="Replace your Local AppData settings with the install/share appsettings.json (adds missing sections like streaming)."
+                       TextWrapping="WrapWholeWords"
+                       Opacity="0.75"
+                       FontSize="12" />
+            <Button x:Name="RestoreDefaultsButton"
+                    Content="Restore install defaults"
+                    HorizontalAlignment="Stretch"
+                    Click="RestoreDefaultsButton_Click" />
+
+            <TextBlock x:Name="PathHint" FontSize="11" Opacity="0.65" TextWrapping="WrapWholeWords" />
+        </StackPanel>
+    </ScrollViewer>
+</ContentDialog>
