@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 param(
-    [string]$SourcePath = '',
+    [string]$SourcePath = '\\CHANGE\ME',
     [string]$Destination = (Join-Path $env:LOCALAPPDATA 'Programs\Toolbox'),
     [switch]$NoShortcut,
     [switch]$NoLaunch
@@ -12,7 +12,7 @@ function Resolve-SourcePath {
     param([string]$Requested)
 
     if (-not [string]::IsNullOrWhiteSpace($Requested) -and (Test-Path -LiteralPath $Requested)) {
-        return (Resolve-Path -LiteralPath $Requested).Path
+        return (Resolve-Path -LiteralPath $Requested).ProviderPath
     }
 
     $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
@@ -22,6 +22,7 @@ function Resolve-SourcePath {
 
     throw "Could not find Toolbox.exe. Pass -SourcePath to the published folder (for example \\fileserver\apps\Toolbox)."
 }
+
 
 $source = Resolve-SourcePath -Requested $SourcePath
 $exeName = 'Toolbox.exe'
@@ -100,5 +101,5 @@ Write-Host "  On close, newer files can sync from: $source"
 Write-Host ""
 
 if (-not $NoLaunch) {
-    Start-Process -FileName $destExe -WorkingDirectory $Destination
+    Start-Process -FilePath $destExe -WorkingDirectory $Destination
 }
