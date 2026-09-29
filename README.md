@@ -96,10 +96,9 @@ Packaged installs are updated only through SCCM. Do not use `Install-Toolbox.ps1
 
 ## GitHub Releases (automated)
 
-Push a version tag to build release assets on `windows-latest`:
+Push a version tag to build release assets on `windows-latest`. The workflow sets `Toolbox.csproj` and `Package.appxmanifest` versions from the tag (`v2.0.1` → `2.0.1` / `2.0.1.0`):
 
 ```powershell
-# Bump Version in Toolbox.csproj + Package.appxmanifest Identity first, then:
 git tag v2.0.1
 git push origin v2.0.1
 ```
@@ -109,7 +108,7 @@ The [Release](.github/workflows/release.yml) workflow runs `scripts/publish.ps1`
 - `Toolbox-<tag>-win-x64.zip` — unpackaged self-contained folder (unzip / robocopy to your share)
 - `*.msix` — unsigned package (sign locally before SCCM)
 
-You can also run the workflow manually from the Actions tab (`workflow_dispatch`) to produce artifacts without creating a release.
+You can also run the workflow manually from the Actions tab (`workflow_dispatch`) to produce artifacts without creating a release (keeps versions already in the repo files).
 
 ## Project layout
 
