@@ -69,3 +69,6 @@ Desktop.ini
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Personal editor profile (theme, font, extensions). Import with Profiles: Import Profile.
+.code-profile
