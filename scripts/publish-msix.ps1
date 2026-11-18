@@ -1,243 +1,155 @@
 #Requires -Version 5.1
+<#
+.SYNOPSIS
+Builds the Toolbox MSIX package for deployment with Configuration Manager or Intune.
+
+.DESCRIPTION
+Without a certificate the package is left unsigned. With -CertificateThumbprint the package
+is signed from the certificate store (smart cards and HSM-backed keys work). With
+-CertificatePath the PFX is imported into CurrentUser\My for the duration of the signing so its
+password never appears on a command line.
+
+.EXAMPLE
+.\scripts\publish-msix.ps1 -CertificateThumbprint 0123456789ABCDEF0123456789ABCDEF01234567
+#>
+[CmdletBinding(DefaultParameterSetName = 'Unsigned')]
 param(
-    [string]$Configuration = 'Release',
-    [string]$Platform = 'x64',
+    [ValidateSet('Release', 'Debug')][string]$Configuration = 'Release',
     [string]$OutputDir = (Join-Path $PSScriptRoot '..\dist\msix'),
-    [string]$CertificatePath = '',
-    [SecureString]$CertificatePassword,
+    [Parameter(ParameterSetName = 'Store')][string]$CertificateThumbprint,
+    [Parameter(ParameterSetName = 'Pfx')][string]$CertificatePath,
+    [Parameter(ParameterSetName = 'Pfx')][SecureString]$CertificatePassword,
     [string]$TimestampUrl = 'http://timestamp.digicert.com',
     [switch]$ForceDotnet
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
-$project = Join-Path $repoRoot 'src\Toolbox\Toolbox.csproj'
-$manifest = Join-Path $repoRoot 'src\Toolbox\Package.appxmanifest'
+$repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).ProviderPath
+$projectDir = Join-Path $repoRoot 'src\Toolbox'
+$project = Join-Path $projectDir 'Toolbox.csproj'
+$manifest = Join-Path $projectDir 'Package.appxmanifest'
 $OutputDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDir)
-$logFile = Join-Path $repoRoot "src\Toolbox\publish-msix-$Configuration.log"
+$logFile = Join-Path $projectDir "publish-msix-$Configuration.log"
 
-if (-not (Test-Path -LiteralPath $project)) {
-    throw "Project not found: $project"
-}
-if (-not (Test-Path -LiteralPath $manifest)) {
-    throw "Package.appxmanifest not found: $manifest"
+foreach ($required in $project, $manifest) {
+    if (-not (Test-Path -LiteralPath $required)) { throw "Not found: $required" }
 }
 
 function Get-VSMSBuild {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-    if (-not (Test-Path -LiteralPath $vswhere)) {
-        return $null
-    }
-
-    $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild `
-        -find 'MSBuild\**\Bin\MSBuild.exe' 2>$null |
+    if (-not (Test-Path -LiteralPath $vswhere)) { return $null }
+    $found = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' 2>$null |
         Select-Object -First 1
-
-    if ($msbuild -and (Test-Path -LiteralPath $msbuild)) {
-        return $msbuild
-    }
-
+    if ($found -and (Test-Path -LiteralPath $found)) { return $found }
     return $null
 }
 
 function Get-SignTool {
-    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-    if (Test-Path -LiteralPath $vswhere) {
-        $fromVs = & $vswhere -latest -products * -find '**\signtool.exe' 2>$null |
-            Where-Object { $_ -match '\\x64\\' } |
-            Select-Object -First 1
-        if ($fromVs -and (Test-Path -LiteralPath $fromVs)) {
-            return $fromVs
-        }
-    }
-
     $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
     if (Test-Path -LiteralPath $kits) {
-        $kitTool = Get-ChildItem -LiteralPath $kits -Recurse -Filter 'signtool.exe' -ErrorAction SilentlyContinue |
+        $tool = Get-ChildItem -LiteralPath $kits -Recurse -Filter 'signtool.exe' -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1
-        if ($kitTool) {
-            return $kitTool.FullName
-        }
+            Sort-Object FullName -Descending | Select-Object -First 1
+        if ($tool) { return $tool.FullName }
     }
-
+    $nuget = Join-Path $env:USERPROFILE '.nuget\packages\microsoft.windows.sdk.buildtools'
+    if (Test-Path -LiteralPath $nuget) {
+        $tool = Get-ChildItem -LiteralPath $nuget -Recurse -Filter 'signtool.exe' -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+        if ($tool) { return $tool.FullName }
+    }
     return $null
 }
 
 function Show-LogTail {
-    param([string]$Path, [int]$Lines = 80)
+    param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { return }
-    Write-Host ""
-    Write-Host "----- last $Lines lines of $Path -----"
-    Get-Content -LiteralPath $Path -Tail $Lines
-    Write-Host "----- end log -----"
+    Write-Host "----- last 60 lines of $Path -----"
+    Get-Content -LiteralPath $Path -Tail 60
 }
 
-$appPackages = Join-Path $repoRoot 'src\Toolbox\AppPackages'
-if (Test-Path -LiteralPath $appPackages) {
-    Write-Host "Cleaning $appPackages"
-    Remove-Item -LiteralPath $appPackages -Recurse -Force -ErrorAction SilentlyContinue
-}
-
+$appPackages = Join-Path $projectDir 'AppPackages'
+if (Test-Path -LiteralPath $appPackages) { Remove-Item -LiteralPath $appPackages -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-if (Test-Path -LiteralPath $logFile) {
-    Remove-Item -LiteralPath $logFile -Force
-}
+if (Test-Path -LiteralPath $logFile) { Remove-Item -LiteralPath $logFile -Force }
 
-Write-Host "Building MSIX package"
-Write-Host "  Project:  $project"
-Write-Host "  Output:   $OutputDir"
-Write-Host "  Manifest: $manifest"
-Write-Host ""
+$common = @(
+    "-p:Configuration=$Configuration", '-p:Platform=x64', '-p:PlatformTarget=x64', '-p:RuntimeIdentifier=win-x64',
+    '-p:SelfContained=true', '-p:WindowsPackageType=MSIX', '-p:EnableMsixTooling=true',
+    '-p:GenerateAppxPackageOnBuild=true', '-p:AppxPackageSigningEnabled=false', '-p:AppxBundle=Never',
+    '-p:UapAppxPackageBuildMode=SideLoadOnly', '-p:WindowsAppSDKSelfContained=true',
+    "-p:AppxPackageDir=$appPackages\"
+)
 
 $msbuild = Get-VSMSBuild
-$exitCode = 0
-
+Write-Host "Building MSIX ($Configuration)"
 if ($msbuild -and -not $ForceDotnet) {
-    Write-Host "Using Visual Studio MSBuild:"
-    Write-Host "  $msbuild"
-    Write-Host "Log:"
-    Write-Host "  $logFile"
-    Write-Host ""
-
-    $args = @(
-        $project,
-        '/restore',
-        '/t:Publish',
-        "/p:Configuration=$Configuration",
-        "/p:Platform=$Platform",
-        '/p:PlatformTarget=x64',
-        '/p:RuntimeIdentifier=win-x64',
-        '/p:SelfContained=true',
-        '/p:WindowsPackageType=MSIX',
-        '/p:EnableMsixTooling=true',
-        '/p:GenerateAppxPackageOnBuild=true',
-        '/p:AppxPackageSigningEnabled=false',
-        '/p:AppxBundle=Never',
-        '/p:UapAppxPackageBuildMode=SideLoadOnly',
-        '/p:WindowsAppSDKSelfContained=true',
-        '/p:PublishSingleFile=false',
-        '/p:PublishTrimmed=false',
-        '/p:PublishReadyToRun=true',
-        '/nologo',
-        '/m',
-        '/v:n',
-        '/fl',
-        "/flp:LogFile=$logFile;Verbosity=normal"
-    )
-
-    $proc = Start-Process -FilePath $msbuild -ArgumentList $args -Wait -PassThru -NoNewWindow
-    $exitCode = $proc.ExitCode
+    & $msbuild $project '/restore' '/t:Publish' @common '/p:PublishReadyToRun=true' '/nologo' '/m' '/v:minimal' '/fl' "/flp:LogFile=$logFile;Verbosity=normal"
 }
 else {
-    if (-not $msbuild) {
-        Write-Warning "Visual Studio MSBuild not found; trying dotnet build (MSIX generation is less reliable)."
-    }
-
-    & dotnet publish $project `
-        -c $Configuration `
-        -r win-x64 `
-        -p:Platform=x64 `
-        -p:PlatformTarget=x64 `
-        --self-contained true `
-        -p:WindowsPackageType=MSIX `
-        -p:EnableMsixTooling=true `
-        -p:GenerateAppxPackageOnBuild=true `
-        -p:AppxPackageSigningEnabled=false `
-        -p:AppxBundle=Never `
-        -p:UapAppxPackageBuildMode=SideLoadOnly `
-        -p:WindowsAppSDKSelfContained=true `
-        2>&1 | Tee-Object -FilePath $logFile
-    $exitCode = $LASTEXITCODE
-    if ($null -eq $exitCode) { $exitCode = 1 }
+    if (-not $msbuild) { Write-Warning 'Visual Studio MSBuild not found; using dotnet publish (less reliable for MSIX).' }
+    & dotnet publish $project @common "-flp:LogFile=$logFile;Verbosity=normal"
+}
+if ($LASTEXITCODE -ne 0) {
+    Show-LogTail $logFile
+    throw "MSIX build failed with exit code $LASTEXITCODE. Log: $logFile"
 }
 
-if ($exitCode -ne 0) {
-    Show-LogTail -Path $logFile
-    throw "MSIX build failed with exit code $exitCode. See log: $logFile"
+$msix = @(Get-ChildItem -LiteralPath $appPackages -Recurse -Filter '*.msix' -ErrorAction SilentlyContinue)
+if ($msix.Count -ne 1) {
+    Show-LogTail $logFile
+    throw "Expected exactly one .msix under $appPackages, found $($msix.Count)."
 }
 
-$msix = Get-ChildItem -LiteralPath (Join-Path $repoRoot 'src\Toolbox') -Recurse -Filter '*.msix' -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -match '\\AppPackages\\' -or $_.DirectoryName -match 'msix' } |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
+$destMsix = Join-Path $OutputDir $msix[0].Name
+Copy-Item -LiteralPath $msix[0].FullName -Destination $destMsix -Force
+Write-Host "Package: $destMsix"
 
-if (-not $msix) {
-    $msix = Get-ChildItem -LiteralPath (Join-Path $repoRoot 'src\Toolbox') -Recurse -Filter '*.msix' -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-}
-
-if (-not $msix) {
-    Show-LogTail -Path $logFile
-    throw "Build succeeded but no .msix was found under src\Toolbox. Open the log and confirm GenerateAppxPackageOnBuild ran: $logFile"
-}
-
-$destMsix = Join-Path $OutputDir $msix.Name
-Copy-Item -LiteralPath $msix.FullName -Destination $destMsix -Force
-Write-Host ""
-Write-Host "MSIX copied to: $destMsix"
-
-if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
-    if (-not (Test-Path -LiteralPath $CertificatePath)) {
-        throw "Certificate not found: $CertificatePath"
-    }
-
+if ($PSCmdlet.ParameterSetName -ne 'Unsigned') {
     $signTool = Get-SignTool
-    if (-not $signTool) {
-        throw "signtool.exe not found. Install the Windows SDK or use Visual Studio Desktop development workload."
-    }
+    if (-not $signTool) { throw 'signtool.exe not found. Install the Windows SDK.' }
 
-    Write-Host "Signing with:"
-    Write-Host "  $signTool"
-    Write-Host "  Cert: $CertificatePath"
-
-    $plainPassword = $null
-    if ($CertificatePassword) {
-        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($CertificatePassword)
-        try {
-            $plainPassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+    $imported = $null
+    try {
+        if ($PSCmdlet.ParameterSetName -eq 'Pfx') {
+            if (-not (Test-Path -LiteralPath $CertificatePath -PathType Leaf)) { throw "Certificate not found: $CertificatePath" }
+            $pfxArgs = @{ FilePath = $CertificatePath }
+            if ($CertificatePassword) { $pfxArgs.Password = $CertificatePassword }
+            $pfxThumb = (Get-PfxData @pfxArgs).EndEntityCertificates[0].Thumbprint
+            $alreadyPresent = Test-Path -LiteralPath "Cert:\CurrentUser\My\$pfxThumb"
+            $importArgs = $pfxArgs + @{ CertStoreLocation = 'Cert:\CurrentUser\My' }
+            $certificateFromPfx = Import-PfxCertificate @importArgs
+            if (-not $alreadyPresent) { $imported = $certificateFromPfx }
+            $CertificateThumbprint = $certificateFromPfx.Thumbprint
         }
-        finally {
-            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+
+        $thumb = ($CertificateThumbprint -replace '[^0-9A-Fa-f]', '').ToUpperInvariant()
+        [xml]$appx = Get-Content -LiteralPath $manifest
+        $cert = Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My | Where-Object Thumbprint -eq $thumb | Select-Object -First 1
+        if (-not $cert) { throw "Certificate $thumb is not in the certificate store." }
+        if ($cert.Subject -ne $appx.Package.Identity.Publisher) {
+            throw "Package.appxmanifest Publisher '$($appx.Package.Identity.Publisher)' must match the certificate subject '$($cert.Subject)'."
         }
-    }
 
-    $signArgs = @(
-        'sign',
-        '/fd', 'SHA256',
-        '/tr', $TimestampUrl,
-        '/td', 'SHA256',
-        '/f', $CertificatePath,
-        $destMsix
-    )
-    if ($plainPassword) {
-        $signArgs = @('sign', '/fd', 'SHA256', '/tr', $TimestampUrl, '/td', 'SHA256', '/f', $CertificatePath, '/p', $plainPassword, $destMsix)
+        & $signTool sign /fd SHA256 /tr $TimestampUrl /td SHA256 /sha1 $thumb $destMsix
+        if ($LASTEXITCODE -ne 0) { throw "signtool sign failed with exit code $LASTEXITCODE." }
+        & $signTool verify /pa $destMsix
+        if ($LASTEXITCODE -ne 0) { throw 'signtool verify failed. Is the signing certificate trusted on this machine?' }
+        Write-Host "Signed by $($cert.Subject)"
     }
-
-    & $signTool @signArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "SignTool failed with exit code $LASTEXITCODE. Confirm Package.appxmanifest Publisher matches the cert Subject."
+    finally {
+        if ($imported) { Remove-Item -LiteralPath "Cert:\CurrentUser\My\$($imported.Thumbprint)" -ErrorAction SilentlyContinue }
     }
-
-    Write-Host "Signed successfully."
 }
 else {
-    Write-Host ""
-    Write-Host "Package is UNSIGNED. On your Windows PC, sign it before SCCM:"
-    Write-Host "  signtool sign /fd SHA256 /tr $TimestampUrl /td SHA256 /f YourCert.pfx /p <pwd> `"$destMsix`""
-    Write-Host ""
-    Write-Host "Publisher in Package.appxmanifest must match the certificate Subject exactly."
+    Write-Host 'Package is unsigned. Sign it before deploying:'
+    Write-Host "  .\scripts\publish-msix.ps1 -CertificateThumbprint <thumbprint>"
 }
 
-Write-Host ""
-Write-Host "Next (SCCM):"
-Write-Host "  1. Trust the signing cert on clients (GPO / Cert Profile) if needed"
-Write-Host "  2. Create Application → Windows app package (*.msix) → select the signed file"
-Write-Host "  3. Deploy to help-desk collection; bump Identity Version for upgrades"
-Write-Host "  4. Keep unpackaged publish.ps1 only if you still need the file-share path"
-Write-Host ""
+$hash = (Get-FileHash -LiteralPath $destMsix -Algorithm SHA256).Hash
+Set-Content -LiteralPath "$destMsix.sha256" -Value "$hash  $(Split-Path -Leaf $destMsix)" -Encoding ASCII
+Write-Host "SHA-256: $hash"
 Write-Host "Build log: $logFile"
-Write-Host "Package:   $destMsix"

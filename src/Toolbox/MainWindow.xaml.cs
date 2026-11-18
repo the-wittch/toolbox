@@ -1,29 +1,44 @@
 using System.Collections.ObjectModel;
-using Microsoft.UI;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Globalization;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
+using Toolbox.Configuration;
+using Toolbox.Diagnostics;
+using Toolbox.Laps;
 using Toolbox.Models;
 using Toolbox.Services;
 using Toolbox.Views;
-using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
-using Windows.System;
+using VirtualKey = Windows.System.VirtualKey;
 using WinRT.Interop;
 
 namespace Toolbox;
 
 public sealed partial class MainWindow : Window
 {
+    private const string Mask = "••••••••••••";
+    private const string NotRetrieved = "Not retrieved";
+
     private readonly ObservableCollection<ComputerItem> _results = new();
     private readonly ObservableCollection<string> _history = new();
     private readonly ObservableCollection<StatusLogEntry> _status = new();
     private readonly List<AvailableRemoteTool> _remoteTools = new();
+    private readonly CancellationTokenSource _lifetime = new();
+    private readonly SecureClipboard _clipboard;
+    private readonly DispatcherQueueTimer _detailDebounce;
+    private readonly DispatcherQueueTimer _lapsMaskTimer;
+
     private CancellationTokenSource? _searchCts;
     private CancellationTokenSource? _detailCts;
-    private ComputerDetail? _currentDetail;
+    private CancellationTokenSource? _lapsCts;
+    private ComputerItem? _currentItem;
+    private bool _currentOnline;
+    private bool _lapsRevealed;
     private int _statusCounter;
     private bool _suppressThemeEvent;
     private bool _suppressPresetEvent;
@@ -31,6 +46,23 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _clipboard = new SecureClipboard(DispatcherQueue);
+
+        _detailDebounce = DispatcherQueue.CreateTimer();
+        _detailDebounce.Interval = TimeSpan.FromMilliseconds(300);
+        _detailDebounce.IsRepeating = false;
+        _detailDebounce.Tick += async (_, _) =>
+        {
+            if (_currentItem is { } item)
+            {
+                await LoadDetailAsync(item);
+            }
+        };
+
+        _lapsMaskTimer = DispatcherQueue.CreateTimer();
+        _lapsMaskTimer.IsRepeating = false;
+        _lapsMaskTimer.Tick += (_, _) => MaskLaps();
+
         ApplyWindowChrome();
         BindCollections();
         ApplyLabelsFromSettings();
@@ -39,6 +71,7 @@ public sealed partial class MainWindow : Window
         LoadPresets();
         LoadSearchHistory();
         LoadStreamingEndpoints();
+        ClearDetail();
         Log(App.Settings.Current.Labels.StatusReady);
         RootGrid.Loaded += MainWindow_Loaded;
         Closed += MainWindow_Closed;
@@ -46,55 +79,121 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
-        App.SearchHistory.Save(_history, Math.Max(1, App.Settings.Current.Search.HistoryLimit));
-
-        _ = App.Updater.TryScheduleUpdateOnClose();
+        _lifetime.Cancel();
+        _clipboard.ClearOnExit();
+        SaveHistory();
+        try
+        {
+            App.Updater.ApplyPendingOnExit();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Applying the staged update failed.", ex);
+        }
     }
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         RootGrid.Loaded -= MainWindow_Loaded;
+        ReportStartupState();
 
         if (App.LocalInstall.ShouldOfferLocalInstall)
         {
-            var installDialog = new InstallLocallyDialog
-            {
-                XamlRoot = RootGrid.XamlRoot
-            };
+            var installDialog = new InstallLocallyDialog { XamlRoot = RootGrid.XamlRoot };
             var installResult = await installDialog.ShowAsync();
-            if (installResult == ContentDialogResult.Primary &&
-                installDialog.InstallResult?.Succeeded == true)
+            if (installResult == ContentDialogResult.Primary && installDialog.InstallResult?.Succeeded == true)
             {
-                Log($"Installed locally to {LocalInstallService.DefaultLocalInstallDirectory}");
-                if (App.LocalInstall.TryLaunchLocalInstallAndExit(Close))
+                Log($"Installed locally to {LocalInstallService.DefaultLocalInstallDirectory}.");
+                if (LocalInstallService.TryLaunchLocalInstall())
                 {
+                    Close();
                     return;
                 }
 
-                Log("Local install finished, but the new copy could not be started automatically.");
+                Log("The local copy was installed but could not be started automatically. Use the desktop shortcut.");
             }
         }
 
-        if (!App.Settings.NeedsFirstRunSetup)
+        if (App.Settings.NeedsFirstRunSetup)
         {
-            return;
+            var dialog = new FirstRunDialog { XamlRoot = RootGrid.XamlRoot };
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                ReloadFromSettings();
+                Log($"Setup saved to {App.Settings.UserSettingsPath}.");
+            }
         }
 
-        var dialog = new FirstRunDialog
+        await CheckForUpdatesAsync();
+    }
+
+    private void ReportStartupState()
+    {
+        foreach (var warning in App.Settings.LoadWarnings)
         {
-            XamlRoot = RootGrid.XamlRoot
-        };
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary)
-        {
-            Title = App.Settings.Current.ProgramTitle;
-            TitleText.Text = App.Settings.Current.ProgramTitle;
-            ApplyLabelsFromSettings();
-            LoadThemeChoices();
-            LoadStreamingEndpoints();
-            App.Theme.Apply(App.Settings.Current.Theme, this);
-            Log($"First-run setup saved to {App.Settings.ActiveSettingsPath}");
+            Log(warning);
         }
+
+        var errors = App.Settings.Issues.Where(i => i.Severity == IssueSeverity.Error).ToList();
+        foreach (var issue in App.Settings.Issues)
+        {
+            AppLog.Warn("Configuration: " + issue);
+        }
+
+        if (errors.Count > 0)
+        {
+            foreach (var issue in errors)
+            {
+                Log($"Configuration problem in {issue.Path}: {issue.Message}");
+            }
+
+            ShowNotice(InfoBarSeverity.Warning, "Configuration problems",
+                $"{errors.Count} setting(s) are invalid and the related features are disabled. See the status log for details.");
+        }
+        else if (App.Settings.LoadWarnings.Count > 0)
+        {
+            ShowNotice(InfoBarSeverity.Warning, "Settings", App.Settings.LoadWarnings[0]);
+        }
+
+        if (UpdateService.ConsumeLastResult() is { } last)
+        {
+            Log(last.Message);
+            ShowNotice(last.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Error,
+                last.Succeeded ? "Updated" : "Update failed", last.Message);
+        }
+    }
+
+    private async Task CheckForUpdatesAsync()
+    {
+        try
+        {
+            var result = await App.Updater.CheckAndStageAsync(_lifetime.Token);
+            switch (result.Status)
+            {
+                case UpdateCheckStatus.Ready:
+                    Log(result.Message);
+                    ShowNotice(InfoBarSeverity.Informational, "Update ready", result.Message);
+                    break;
+                case UpdateCheckStatus.Failed:
+                    Log("Update check failed: " + result.Message);
+                    ShowNotice(InfoBarSeverity.Warning, "Update not installed", result.Message);
+                    break;
+                case UpdateCheckStatus.UpToDate:
+                    Log(result.Message);
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private void ShowNotice(InfoBarSeverity severity, string title, string message)
+    {
+        NoticeBar.Severity = severity;
+        NoticeBar.Title = title;
+        NoticeBar.Message = message;
+        NoticeBar.IsOpen = true;
     }
 
     private void ApplyWindowChrome()
@@ -104,9 +203,8 @@ public sealed partial class MainWindow : Window
         TitleText.Text = App.Settings.Current.ProgramTitle;
 
         var hwnd = WindowNative.GetWindowHandle(this);
-        var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
-        var appWindow = AppWindow.GetFromWindowId(windowId);
-        appWindow.Resize(new SizeInt32(ui.WindowWidth, ui.WindowHeight));
+        var appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd));
+        appWindow.Resize(new SizeInt32(Math.Max(ui.WindowWidth, 640), Math.Max(ui.WindowHeight, 480)));
 
         var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico");
         if (File.Exists(iconPath))
@@ -116,8 +214,8 @@ public sealed partial class MainWindow : Window
 
         if (appWindow.Presenter is OverlappedPresenter presenter)
         {
-            presenter.PreferredMinimumWidth = ui.MinWidth;
-            presenter.PreferredMinimumHeight = ui.MinHeight;
+            presenter.PreferredMinimumWidth = Math.Max(ui.MinWidth, 640);
+            presenter.PreferredMinimumHeight = Math.Max(ui.MinHeight, 480);
         }
     }
 
@@ -127,15 +225,10 @@ public sealed partial class MainWindow : Window
         HistoryList.ItemsSource = _history;
         StatusList.ItemsSource = _status;
 
-        HistoryPanel.Visibility = App.Settings.Current.Ui.ShowSearchHistory
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-        HistoryColumn.Width = App.Settings.Current.Ui.ShowSearchHistory
-            ? new GridLength(200)
-            : new GridLength(0);
-        StatusPanel.Visibility = App.Settings.Current.Ui.ShowStatusLog
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+        var ui = App.Settings.Current.Ui;
+        HistoryPanel.Visibility = ui.ShowSearchHistory ? Visibility.Visible : Visibility.Collapsed;
+        HistoryColumn.Width = ui.ShowSearchHistory ? new GridLength(200) : new GridLength(0);
+        StatusPanel.Visibility = ui.ShowStatusLog ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void ApplyLabelsFromSettings()
@@ -149,15 +242,29 @@ public sealed partial class MainWindow : Window
         HistoryHeader.Text = labels.HistoryHeader;
     }
 
+    private void ReloadFromSettings()
+    {
+        Title = App.Settings.Current.ProgramTitle;
+        TitleText.Text = App.Settings.Current.ProgramTitle;
+        ApplyLabelsFromSettings();
+        LoadRemoteTools();
+        LoadPresets();
+        LoadThemeChoices();
+        LoadStreamingEndpoints();
+        BindCollections();
+        App.Theme.Apply(App.Settings.Current.Theme, this);
+    }
+
     private void LoadRemoteTools()
     {
         _remoteTools.Clear();
         _remoteTools.AddRange(App.RemoteTools.GetAvailableTools());
+        RemoteToolCombo.ItemsSource = null;
         RemoteToolCombo.ItemsSource = _remoteTools;
-        var preferred = _remoteTools.FirstOrDefault(t => t.PreferAsDefault) ?? _remoteTools.FirstOrDefault();
-        if (preferred is not null)
+        RemoteToolCombo.SelectedItem = _remoteTools.FirstOrDefault(t => t.PreferAsDefault) ?? _remoteTools.FirstOrDefault();
+        if (_remoteTools.Count == 0)
         {
-            RemoteToolCombo.SelectedItem = preferred;
+            Log("No remote tools were found on this PC. Check remoteTools in appsettings.json.");
         }
     }
 
@@ -171,8 +278,7 @@ public sealed partial class MainWindow : Window
         }
 
         var current = ThemeService.Normalize(App.Settings.Current.Theme);
-        ThemeCombo.SelectedItem = ThemeCombo.Items
-            .OfType<ComboBoxItem>()
+        ThemeCombo.SelectedItem = ThemeCombo.Items.OfType<ComboBoxItem>()
             .FirstOrDefault(i => string.Equals(i.Tag?.ToString(), current, StringComparison.OrdinalIgnoreCase))
             ?? ThemeCombo.Items.OfType<ComboBoxItem>().FirstOrDefault();
         _suppressThemeEvent = false;
@@ -188,10 +294,13 @@ public sealed partial class MainWindow : Window
         }
 
         PresetCombo.SelectedIndex = PresetCombo.Items.Count > 0 ? 0 : -1;
+        PresetCombo.Visibility = PresetCombo.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         _suppressPresetEvent = false;
     }
 
     private async void SearchButton_Click(object sender, RoutedEventArgs e) => await RunSearchAsync();
+
+    private void CancelSearchButton_Click(object sender, RoutedEventArgs e) => _searchCts?.Cancel();
 
     private async void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
@@ -205,47 +314,58 @@ public sealed partial class MainWindow : Window
     private async Task RunSearchAsync()
     {
         var query = SearchBox.Text?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(query))
-        {
-            Log("Enter a computer name or description fragment to search.");
-            SearchBox.Focus(FocusState.Programmatic);
-            return;
-        }
-
         _searchCts?.Cancel();
-        _searchCts = new CancellationTokenSource();
-        var token = _searchCts.Token;
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        _searchCts = cts;
 
         SetSearching(true);
         Log($"Searching for “{query}”…");
-        PushHistory(query);
-
         try
         {
-            var found = await App.AdSearcher.SearchAsync(query, token);
+            var outcome = await App.AdSearcher.SearchAsync(query, cts.Token);
+            PushHistory(query);
             _results.Clear();
-            foreach (var item in found)
+            foreach (var item in outcome.Items)
             {
                 _results.Add(item);
             }
 
             EmptyResultsText.Visibility = _results.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            Log($"Search complete. Found {_results.Count} computer(s).");
+            ResultCountText.Text = outcome.Truncated
+                ? $"First {_results.Count} results"
+                : $"{_results.Count} result{(_results.Count == 1 ? string.Empty : "s")}";
+            var seconds = outcome.Elapsed.TotalSeconds.ToString("0.0", CultureInfo.CurrentCulture);
+            Log(outcome.Truncated
+                ? $"Showing the first {_results.Count} computers ({seconds} s). Narrow the search to see the rest."
+                : $"Found {_results.Count} computer(s) in {seconds} s.");
             ClearDetail();
+        }
+        catch (SearchInputException ex)
+        {
+            Log(ex.Message);
+            SearchBox.Focus(FocusState.Programmatic);
         }
         catch (OperationCanceledException)
         {
-            Log("Search cancelled.");
+            if (ReferenceEquals(_searchCts, cts))
+            {
+                Log("Search cancelled.");
+            }
         }
         catch (Exception ex)
         {
-            Log($"Search failed: {ex.Message}");
-            EmptyResultsText.Visibility = Visibility.Visible;
-            _results.Clear();
+            AppLog.Error("Search failed.", ex);
+            Log("Search failed: " + ErrorTranslator.Describe(ex));
         }
         finally
         {
-            SetSearching(false);
+            if (ReferenceEquals(_searchCts, cts))
+            {
+                SetSearching(false);
+                _searchCts = null;
+            }
+
+            cts.Dispose();
         }
     }
 
@@ -253,15 +373,14 @@ public sealed partial class MainWindow : Window
     {
         SearchProgress.IsActive = isSearching;
         SearchProgress.Visibility = isSearching ? Visibility.Visible : Visibility.Collapsed;
-        SearchButton.IsEnabled = !isSearching;
-        SearchBox.IsEnabled = !isSearching;
+        SearchButton.Visibility = isSearching ? Visibility.Collapsed : Visibility.Visible;
+        CancelSearchButton.Visibility = isSearching ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void LoadSearchHistory()
     {
         _history.Clear();
-        var limit = Math.Max(1, App.Settings.Current.Search.HistoryLimit);
-        foreach (var query in App.SearchHistory.Load(limit))
+        foreach (var query in App.SearchHistory.Load(SettingsLimits.HistoryLimit(App.Settings.Current.Search)))
         {
             _history.Add(query);
         }
@@ -276,121 +395,187 @@ public sealed partial class MainWindow : Window
         }
 
         _history.Insert(0, query);
-        var limit = Math.Max(1, App.Settings.Current.Search.HistoryLimit);
+        var limit = SettingsLimits.HistoryLimit(App.Settings.Current.Search);
         while (_history.Count > limit)
         {
             _history.RemoveAt(_history.Count - 1);
         }
 
-        App.SearchHistory.Save(_history, limit);
+        SaveHistory();
     }
 
-    private void HistoryList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    private void SaveHistory()
     {
-        if (HistoryList.SelectedItem is string query)
+        try
+        {
+            App.SearchHistory.Save(_history, SettingsLimits.HistoryLimit(App.Settings.Current.Search));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            AppLog.Warn("Search history could not be saved.", ex);
+        }
+    }
+
+    private void ClearHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        _history.Clear();
+        App.SearchHistory.Clear();
+        Log("Search history cleared.");
+    }
+
+    private async void HistoryList_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is string query)
         {
             SearchBox.Text = query;
-            _ = RunSearchAsync();
+            await RunSearchAsync();
         }
     }
 
     private void PresetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppressPresetEvent)
+        if (_suppressPresetEvent || PresetCombo.SelectedItem is not ComboBoxItem { Tag: SearchPreset preset })
         {
             return;
         }
 
-        if (PresetCombo.SelectedItem is ComboBoxItem { Tag: SearchPreset preset })
+        var text = PresetQuery.Resolve(preset.QueryText, DateTime.Now, CultureInfo.CurrentCulture);
+        if (!string.IsNullOrEmpty(text))
         {
-            var text = SettingsService.ResolvePresetQuery(preset.QueryText);
-            if (!string.IsNullOrEmpty(text))
-            {
-                SearchBox.Text = text;
-            }
+            SearchBox.Text = text;
+            SearchBox.Focus(FocusState.Programmatic);
+            SearchBox.SelectionStart = text.Length;
         }
     }
 
     private void ResultsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (ResultsList.SelectedItem is not ComputerItem item || ReferenceEquals(item, _currentItem))
+        {
+            return;
+        }
 
+        ShowItemSummary(item);
+        _detailDebounce.Stop();
+        _detailDebounce.Start();
     }
 
     private async void ResultsList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
         if (ResultsList.SelectedItem is ComputerItem item)
         {
+            _detailDebounce.Stop();
             await LoadDetailAsync(item);
+        }
+    }
+
+    private async void ResultsList_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == VirtualKey.Enter && ResultsList.SelectedItem is ComputerItem item)
+        {
+            e.Handled = true;
+            _detailDebounce.Stop();
+            await LoadDetailAsync(item);
+        }
+    }
+
+    private void ShowItemSummary(ComputerItem item)
+    {
+        _detailCts?.Cancel();
+        _lapsCts?.Cancel();
+        MaskLaps();
+        _currentItem = item;
+        _currentOnline = false;
+
+        DetailName.Text = item.Name;
+        DetailAdOs.Text = string.IsNullOrWhiteSpace(item.OperatingSystem)
+            ? "Not recorded"
+            : $"{item.OperatingSystem} {item.OperatingSystemVersion}".Trim();
+        DetailLastLogon.Text = item.LastLogon?.ToLocalTime().ToString("g", CultureInfo.CurrentCulture) ?? "Never or unknown";
+        DetailOs.Text = DetailOsVersion.Text = DetailLastUser.Text = "…";
+        DetailLaps.Text = NotRetrieved;
+        LapsInfoText.Text = App.Settings.Current.Laps.Enabled ? string.Empty : "LAPS retrieval is turned off.";
+        SetPing(null, "Ping: …");
+
+        var usable = item.HasValidHostName;
+        RemoteButton.IsEnabled = usable && _remoteTools.Count > 0;
+        CopyNameButton.IsEnabled = true;
+        ShowLapsButton.IsEnabled = CopyLapsButton.IsEnabled = App.Settings.Current.Laps.Enabled;
+        RebuildDetailActions(false);
+
+        if (!usable)
+        {
+            Log($"“{item.Name}” is not a valid host name, so ping, remote registry and remote tools are disabled for it.");
         }
     }
 
     private async Task LoadDetailAsync(ComputerItem item)
     {
+        if (!ReferenceEquals(item, _currentItem))
+        {
+            ShowItemSummary(item);
+        }
+
         _detailCts?.Cancel();
-        _detailCts = new CancellationTokenSource();
-        var token = _detailCts.Token;
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        _detailCts = cts;
 
         DetailProgress.IsActive = true;
         DetailProgress.Visibility = Visibility.Visible;
-        DetailName.Text = item.Name;
         DetailOs.Text = App.Settings.Current.Labels.LoadingDetail;
-        DetailOsVersion.Text = "…";
-        DetailLastUser.Text = "…";
-        DetailLaps.Text = "…";
-        PingSummary.Text = "Ping: …";
-        PingDetails.Text = string.Empty;
-        PingDot.Fill = GetToolboxBrush("ToolboxSubtleFillBrush");
-        Log($"Loading details for {item.Name}…");
 
         try
         {
-            var detail = await App.ComputerInfo.GetDetailAsync(item.Name, token);
-            if (token.IsCancellationRequested)
+            var detail = await App.ComputerInfo.GetDetailAsync(item, cts.Token);
+            if (cts.IsCancellationRequested || !ReferenceEquals(item, _currentItem))
             {
                 return;
             }
 
-            _currentDetail = detail;
-            DetailName.Text = detail.ComputerName;
             DetailOs.Text = detail.OperatingSystem;
             DetailOsVersion.Text = detail.OperatingSystemVersion;
             DetailLastUser.Text = detail.LastLoggedOnUser;
-            DetailLaps.Text = detail.LapsPassword;
-            ApplyPingUi(detail.Ping);
+            _currentOnline = detail.Ping.IsReachable;
+            SetPing(detail.Ping.IsReachable,
+                detail.Ping.IsReachable ? $"Online ({detail.Ping.RoundtripTimeMs} ms)" : $"Offline ({detail.Ping.Status})");
             RebuildDetailActions(detail.Ping.IsReachable);
-            Log($"Details ready for {item.Name} ({detail.Ping.Status}).");
+            Log($"Details loaded for {item.Name} ({(detail.Ping.IsReachable ? "online" : detail.Ping.Status)}).");
         }
         catch (OperationCanceledException)
         {
-            Log("Detail load cancelled.");
         }
         catch (Exception ex)
         {
-            Log($"Detail load failed: {ex.Message}");
+            AppLog.Error($"Loading details for {item.Name} failed.", ex);
             DetailOs.Text = "Error";
-            DetailOsVersion.Text = ex.Message;
+            DetailOsVersion.Text = ErrorTranslator.Describe(ex);
+            Log($"Could not load details for {item.Name}: {ErrorTranslator.Describe(ex)}");
         }
         finally
         {
-            DetailProgress.IsActive = false;
-            DetailProgress.Visibility = Visibility.Collapsed;
+            if (ReferenceEquals(_detailCts, cts))
+            {
+                DetailProgress.IsActive = false;
+                DetailProgress.Visibility = Visibility.Collapsed;
+                _detailCts = null;
+            }
+
+            cts.Dispose();
         }
     }
 
-    private void ApplyPingUi(PingResult ping)
+    private void SetPing(bool? online, string text)
     {
-        PingSummary.Text = ping.IsReachable
-            ? $"Ping: online ({ping.RoundtripTimeMs} ms)"
-            : $"Ping: offline ({ping.Status})";
-        PingDetails.Text = $"Reply: {ping.Status}";
-        PingDot.Fill = new SolidColorBrush(ping.IsReachable
-            ? ColorHelper.FromArgb(255, 46, 125, 80)
-            : ColorHelper.FromArgb(255, 176, 60, 60));
+        PingDotUnknown.Visibility = online is null ? Visibility.Visible : Visibility.Collapsed;
+        PingDotOnline.Visibility = online == true ? Visibility.Visible : Visibility.Collapsed;
+        PingDotOffline.Visibility = online == false ? Visibility.Visible : Visibility.Collapsed;
+        PingSummary.Text = text;
     }
 
     private void RebuildDetailActions(bool isOnline)
     {
         DetailActionsHost.Items.Clear();
+        var usable = _currentItem?.HasValidHostName == true;
         foreach (var action in App.Settings.Current.DetailActions.Where(a => a.Enabled))
         {
             var button = new Button
@@ -398,66 +583,45 @@ public sealed partial class MainWindow : Window
                 Content = action.Label,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Tag = action,
-                IsEnabled = !action.RequiresOnline || isOnline
+                IsEnabled = usable && (!action.RequiresOnline || isOnline)
             };
+            if (action.RequiresOnline && !isOnline)
+            {
+                ToolTipService.SetToolTip(button, "Available when the computer answers ping.");
+            }
+
             button.Click += DetailAction_Click;
             DetailActionsHost.Items.Add(button);
         }
     }
 
-    private void DetailAction_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button { Tag: DetailActionDefinition action })
-        {
-            return;
-        }
-
-        var computer = _currentDetail?.ComputerName ?? (ResultsList.SelectedItem as ComputerItem)?.Name;
-        if (string.IsNullOrWhiteSpace(computer))
-        {
-            Log("Select a computer first.");
-            return;
-        }
-
-        try
-        {
-            App.RemoteTools.LaunchDetailAction(action, computer);
-            Log($"Launched {action.Label} for {computer}.");
-        }
-        catch (Exception ex)
-        {
-            Log($"Could not launch {action.Label}: {ex.Message}");
-        }
-    }
-
     private void ClearDetail()
     {
-        _currentDetail = null;
-        DetailName.Text = "—";
-        DetailOs.Text = "—";
-        DetailOsVersion.Text = "—";
-        DetailLastUser.Text = "—";
-        DetailLaps.Text = "—";
-        PingSummary.Text = "Ping: —";
-        PingDetails.Text = string.Empty;
-        PingDot.Fill = GetToolboxBrush("ToolboxSubtleFillBrush");
+        _detailCts?.Cancel();
+        _lapsCts?.Cancel();
+        MaskLaps();
+        _currentItem = null;
+        _currentOnline = false;
+        DetailName.Text = DetailAdOs.Text = DetailLastLogon.Text = "—";
+        DetailOs.Text = DetailOsVersion.Text = DetailLastUser.Text = "—";
+        DetailLaps.Text = NotRetrieved;
+        LapsInfoText.Text = string.Empty;
+        SetPing(null, "Ping: —");
+        RemoteButton.IsEnabled = CopyNameButton.IsEnabled = ShowLapsButton.IsEnabled = CopyLapsButton.IsEnabled = false;
         DetailActionsHost.Items.Clear();
     }
 
-    private static Brush GetToolboxBrush(string key)
+    private void DetailAction_Click(object sender, RoutedEventArgs e)
     {
-        if (Application.Current.Resources.TryGetValue(key, out var value) && value is Brush brush)
+        if (sender is Button { Tag: DetailActionDefinition action } && _currentItem is { } item)
         {
-            return brush;
+            Log(App.RemoteTools.LaunchDetailAction(action, item.Name).Message);
         }
-
-        return new SolidColorBrush(Colors.Gray);
     }
 
     private void RemoteButton_Click(object sender, RoutedEventArgs e)
     {
-        var computer = _currentDetail?.ComputerName ?? (ResultsList.SelectedItem as ComputerItem)?.Name;
-        if (string.IsNullOrWhiteSpace(computer))
+        if (_currentItem is not { } item)
         {
             Log("Select a computer before remoting in.");
             return;
@@ -465,104 +629,233 @@ public sealed partial class MainWindow : Window
 
         if (RemoteToolCombo.SelectedItem is not AvailableRemoteTool tool)
         {
-            Log("No remote tool is available on this PC. Check remoteTools paths in appsettings.json.");
+            Log("No remote tool is available on this PC. Check remoteTools in appsettings.json.");
             return;
         }
 
-        try
+        if (!_currentOnline && PingSummary.Text.StartsWith("Offline", StringComparison.Ordinal))
         {
-            App.RemoteTools.LaunchRemote(tool, computer);
-            Log($"Connecting to {computer} with {tool.Label}…");
+            Log($"{item.Name} did not answer ping; trying anyway.");
         }
-        catch (Exception ex)
-        {
-            Log($"Remote launch failed: {ex.Message}");
-        }
+
+        Log(App.RemoteTools.LaunchRemote(tool, item.Name).Message);
     }
 
     private void CopyComputerName_Click(object sender, RoutedEventArgs e)
     {
-        var name = DetailName.Text;
-        if (string.IsNullOrWhiteSpace(name) || name == "—")
+        if (_currentItem is { } item)
         {
-            return;
+            SecureClipboard.CopyText(item.Name);
+            Log($"Copied {item.Name}.");
         }
-
-        var package = new DataPackage();
-        package.SetText(name);
-        Clipboard.SetContent(package);
-        Log($"Copied computer name {name}.");
     }
 
-    private void CopyLaps_Click(object sender, RoutedEventArgs e)
+    private async void ShowLapsButton_Click(object sender, RoutedEventArgs e)
     {
-        var laps = DetailLaps.Text;
-        if (string.IsNullOrWhiteSpace(laps) || laps is "—" or "N/A" or "…")
+        if (_lapsRevealed)
         {
-            Log("No LAPS password to copy.");
+            MaskLaps();
             return;
         }
 
-        var package = new DataPackage();
-        package.SetText(laps);
-        Clipboard.SetContent(package);
-        Log("Copied LAPS password.");
+        var result = await RetrieveLapsAsync();
+        if (result?.Password is null)
+        {
+            return;
+        }
+
+        DetailLaps.Text = result.Password;
+        _lapsRevealed = true;
+        ShowLapsButton.Content = "Hide";
+        _lapsMaskTimer.Interval = SettingsLimits.Reveal(App.Settings.Current.Laps);
+        _lapsMaskTimer.Start();
+    }
+
+    private async void CopyLapsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var item = _currentItem;
+        var result = await RetrieveLapsAsync();
+        if (result?.Password is null || item is null)
+        {
+            return;
+        }
+
+        var clearAfter = SettingsLimits.ClipboardClear(App.Settings.Current.Laps);
+        if (!_clipboard.CopySecret(result.Password, clearAfter))
+        {
+            Log("The password could not be copied. Try again.");
+            return;
+        }
+
+        Log(clearAfter > TimeSpan.Zero
+            ? $"Copied the LAPS password for {item.Name}. It stays out of clipboard history and will be cleared in {clearAfter.TotalSeconds:0} s."
+            : $"Copied the LAPS password for {item.Name}. It stays out of clipboard history.");
+    }
+
+    private async Task<LapsResult?> RetrieveLapsAsync()
+    {
+        if (_currentItem is not { } item)
+        {
+            Log("Select a computer first.");
+            return null;
+        }
+
+        _lapsCts?.Cancel();
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        _lapsCts = cts;
+        ShowLapsButton.IsEnabled = CopyLapsButton.IsEnabled = false;
+        LapsInfoText.Text = "Retrieving…";
+
+        try
+        {
+            var result = await App.Laps.RetrieveAsync(item, cts.Token);
+            if (!ReferenceEquals(item, _currentItem))
+            {
+                return null;
+            }
+
+            if (result.Status != LapsStatus.Retrieved)
+            {
+                LapsInfoText.Text = result.Message;
+                Log($"LAPS for {item.Name}: {result.Message}");
+                return null;
+            }
+
+            if (!_lapsRevealed)
+            {
+                DetailLaps.Text = Mask;
+            }
+
+            LapsInfoText.Text = DescribeLaps(result);
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        finally
+        {
+            if (ReferenceEquals(_lapsCts, cts))
+            {
+                ShowLapsButton.IsEnabled = CopyLapsButton.IsEnabled = _currentItem is not null;
+                _lapsCts = null;
+            }
+
+            cts.Dispose();
+        }
+    }
+
+    private static string DescribeLaps(LapsResult result)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(result.AccountName))
+        {
+            parts.Add(result.AccountName!);
+        }
+
+        parts.Add(LapsResult.Describe(result.Source));
+        if (result.Expiration is { } expires)
+        {
+            parts.Add((expires < DateTimeOffset.Now ? "expired " : "expires ") +
+                      expires.ToLocalTime().ToString("g", CultureInfo.CurrentCulture));
+        }
+
+        return string.Join(" · ", parts);
+    }
+
+    private void MaskLaps()
+    {
+        _lapsMaskTimer.Stop();
+        if (_lapsRevealed)
+        {
+            DetailLaps.Text = Mask;
+        }
+
+        _lapsRevealed = false;
+        ShowLapsButton.Content = "Show";
     }
 
     private void ThemeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppressThemeEvent)
+        if (_suppressThemeEvent || ThemeCombo.SelectedItem is not ComboBoxItem { Tag: string themeId })
         {
             return;
         }
 
-        if (ThemeCombo.SelectedItem is ComboBoxItem { Tag: string themeId })
+        App.Theme.Apply(themeId, this);
+        try
         {
-            App.Theme.Apply(themeId, this);
-            try
-            {
-                App.Settings.SaveCurrent();
-            }
-            catch (Exception ex)
-            {
-                Log($"Theme applied, but settings could not be saved: {ex.Message}");
-            }
+            App.Settings.SaveUserSettings(App.Settings.Current, markSetupComplete: false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            AppLog.Warn("Theme could not be saved.", ex);
+            Log("Theme applied, but it could not be saved: " + ErrorTranslator.Describe(ex));
         }
     }
 
     private async void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new SettingsDialog
-        {
-            XamlRoot = RootGrid.XamlRoot
-        };
+        var dialog = new SettingsDialog { XamlRoot = RootGrid.XamlRoot };
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary || dialog.DefaultsRestored)
         {
-            Title = App.Settings.Current.ProgramTitle;
-            TitleText.Text = App.Settings.Current.ProgramTitle;
-            ApplyLabelsFromSettings();
-            LoadRemoteTools();
-            LoadPresets();
-            LoadThemeChoices();
-            LoadStreamingEndpoints();
-            App.Theme.Apply(App.Settings.Current.Theme, this);
-            BindCollections();
-            if (result == ContentDialogResult.Primary)
-            {
-                Log($"Settings saved to {App.Settings.ActiveSettingsPath}");
-            }
-            else
-            {
-                Log($"Restored install defaults to {App.Settings.ActiveSettingsPath}");
-            }
+            ReloadFromSettings();
+            Log(result == ContentDialogResult.Primary
+                ? $"Settings saved to {App.Settings.UserSettingsPath}."
+                : "Personal settings were reset to the install defaults.");
+        }
+    }
+
+    private void FocusSearch_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        SearchBox.Focus(FocusState.Keyboard);
+        SearchBox.SelectAll();
+    }
+
+    private void Cancel_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (_searchCts is not null || _detailCts is not null)
+        {
+            args.Handled = true;
+            _searchCts?.Cancel();
+            _detailCts?.Cancel();
+        }
+    }
+
+    private async void RefreshDetails_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (_currentItem is { } item)
+        {
+            args.Handled = true;
+            await LoadDetailAsync(item);
+        }
+    }
+
+    private void OpenLogButton_Click(object sender, RoutedEventArgs e)
+    {
+        var folder = AppLog.Directory;
+        if (folder is null || !Directory.Exists(folder))
+        {
+            Log("The log folder is not available.");
+            return;
+        }
+
+        try
+        {
+            var explorer = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
+            using var process = Process.Start(new ProcessStartInfo(explorer) { ArgumentList = { folder }, UseShellExecute = false });
+        }
+        catch (Win32Exception ex)
+        {
+            Log("Could not open the log folder: " + ErrorTranslator.Describe(ex));
         }
     }
 
     private void LoadStreamingEndpoints()
     {
-        var visible = App.Streaming.IsTabVisible;
-        StreamingTab.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        StreamingTab.Visibility = App.Streaming.IsTabVisible ? Visibility.Visible : Visibility.Collapsed;
 
         var selectedId = (StreamingEndpointCombo.SelectedItem as StreamingEndpoint)?.Id;
         StreamingEndpointCombo.Items.Clear();
@@ -571,77 +864,43 @@ public sealed partial class MainWindow : Window
             StreamingEndpointCombo.Items.Add(endpoint);
         }
 
-        if (StreamingEndpointCombo.Items.Count == 0)
-        {
-            StreamingEndpointCombo.SelectedItem = null;
-            return;
-        }
-
-        StreamingEndpointCombo.SelectedItem = StreamingEndpointCombo.Items
-            .OfType<StreamingEndpoint>()
-            .FirstOrDefault(e => string.Equals(e.Id, selectedId, StringComparison.OrdinalIgnoreCase))
-            ?? StreamingEndpointCombo.Items[0];
+        StreamingEndpointCombo.SelectedItem = StreamingEndpointCombo.Items.Count == 0
+            ? null
+            : StreamingEndpointCombo.Items.OfType<StreamingEndpoint>()
+                  .FirstOrDefault(e => string.Equals(e.Id, selectedId, StringComparison.OrdinalIgnoreCase))
+              ?? StreamingEndpointCombo.Items[0];
+        StreamingPasswordButton.Visibility = string.IsNullOrWhiteSpace(App.Streaming.ChangePasswordUrl)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
     }
 
-    private StreamingEndpoint? SelectedStreamingEndpoint =>
-        StreamingEndpointCombo.SelectedItem as StreamingEndpoint;
+    private StreamingEndpoint? SelectedStreamingEndpoint => StreamingEndpointCombo.SelectedItem as StreamingEndpoint;
 
-    private void StreamingConnectButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (SelectedStreamingEndpoint is null)
-        {
-            Log("Select a streaming PC first.");
-            return;
-        }
+    private void StreamingConnectButton_Click(object sender, RoutedEventArgs e) =>
+        Log(SelectedStreamingEndpoint is { } endpoint ? App.Streaming.Connect(endpoint) : "Select a streaming PC first.");
 
-        Log(App.Streaming.Connect(SelectedStreamingEndpoint));
-    }
+    private void StreamingViewButton_Click(object sender, RoutedEventArgs e) =>
+        Log(SelectedStreamingEndpoint is { } endpoint ? App.Streaming.OpenViewStream(endpoint) : "Select a streaming PC first.");
 
-    private void StreamingViewButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (SelectedStreamingEndpoint is null)
-        {
-            Log("Select a streaming PC first.");
-            return;
-        }
+    private void StreamingControlButton_Click(object sender, RoutedEventArgs e) =>
+        Log(SelectedStreamingEndpoint is { } endpoint ? App.Streaming.OpenControlApp(endpoint) : "Select a streaming PC first.");
 
-        Log(App.Streaming.OpenViewStream(SelectedStreamingEndpoint));
-    }
-
-    private void StreamingControlButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (SelectedStreamingEndpoint is null)
-        {
-            Log("Select a streaming PC first.");
-            return;
-        }
-
-        Log(App.Streaming.OpenControlApp(SelectedStreamingEndpoint));
-    }
-
-    private void StreamingPasswordButton_Click(object sender, RoutedEventArgs e)
-    {
+    private void StreamingPasswordButton_Click(object sender, RoutedEventArgs e) =>
         Log(App.Streaming.OpenChangePassword());
-    }
 
     private void Log(string message)
     {
+        AppLog.Info(message);
         _statusCounter++;
-        _status.Add(new StatusLogEntry
-        {
-            Index = _statusCounter,
-            Message = message
-        });
+        _status.Add(new StatusLogEntry { Index = _statusCounter, Message = message });
+        LatestStatusText.Text = message;
 
-        var limit = Math.Max(20, App.Settings.Current.Ui.StatusLogLimit);
+        var limit = SettingsLimits.StatusLogLimit(App.Settings.Current.Ui);
         while (_status.Count > limit)
         {
             _status.RemoveAt(0);
         }
 
-        if (_status.Count > 0)
-        {
-            StatusList.ScrollIntoView(_status[^1]);
-        }
+        StatusList.ScrollIntoView(_status[^1]);
     }
 }

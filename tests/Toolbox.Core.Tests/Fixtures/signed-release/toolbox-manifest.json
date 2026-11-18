@@ -1,0 +1,27 @@
+{
+  "formatVersion": 1,
+  "product": "Toolbox",
+  "version": "3.0.0",
+  "files": [
+    {
+      "path": "appsettings.json",
+      "size": 2,
+      "sha256": "44136FA355B3678A1146AD16F7E8649E94FB4FC21FE77E8310C060F61CAAFF8A"
+    },
+    {
+      "path": "Assets/AppIcon.ico",
+      "size": 4,
+      "sha256": "C2D4B446A44CE54FAB8E01150E24DD24F3D850C7C14DCFE31F6321341DD86874"
+    },
+    {
+      "path": "Toolbox.dll",
+      "size": 3,
+      "sha256": "0343B13708CD52D33ECBB1043B5AE145E73A532BDCCF7DE6925DB5CCE6054FD3"
+    },
+    {
+      "path": "Toolbox.exe",
+      "size": 3,
+      "sha256": "9095BDB859308B62ACF04036FFD4ADFE366D7F737D276EB6C46AE434F3816C9B"
+    }
+  ]
+}

@@ -9,7 +9,13 @@
     mc:Ignorable="d">
 
     <Grid x:Name="RootGrid" Background="{ThemeResource ToolboxPageBrush}">
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator Key="F" Modifiers="Control" Invoked="FocusSearch_Invoked" />
+            <KeyboardAccelerator Key="Escape" Invoked="Cancel_Invoked" />
+            <KeyboardAccelerator Key="F5" Invoked="RefreshDetails_Invoked" />
+        </Grid.KeyboardAccelerators>
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
@@ -22,19 +28,22 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                    <Border Width="10" Height="10" CornerRadius="5" Background="{StaticResource ToolboxAccentBrush}" VerticalAlignment="Center" />
+                    <Border Width="10" Height="10" CornerRadius="5" Background="{StaticResource ToolboxAccentBrush}"
+                            VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw" />
                     <TextBlock x:Name="TitleText"
                                Text="Toolbox"
                                Style="{StaticResource SectionTitleStyle}"
                                Foreground="{ThemeResource ToolboxTextPrimaryBrush}"
                                Margin="0"
-                               VerticalAlignment="Center" />
+                               VerticalAlignment="Center"
+                               AutomationProperties.HeadingLevel="Level1" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
                     <ComboBox x:Name="ThemeCombo"
                               MinWidth="120"
                               SelectionChanged="ThemeCombo_SelectionChanged"
-                              ToolTipService.ToolTip="Theme" />
+                              ToolTipService.ToolTip="Theme"
+                              AutomationProperties.Name="Theme" />
                     <Button x:Name="SettingsButton"
                             Content="Settings"
                             Click="SettingsButton_Click" />
@@ -42,8 +51,14 @@
             </Grid>
         </Border>
 
-        <TabView x:Name="MainTabs"
+        <InfoBar x:Name="NoticeBar"
                  Grid.Row="1"
+                 Margin="16,8,16,0"
+                 IsOpen="False"
+                 IsClosable="True" />
+
+        <TabView x:Name="MainTabs"
+                 Grid.Row="2"
                  Padding="8,4,8,0"
                  IsAddTabButtonVisible="False"
                  CanReorderTabs="False"
@@ -58,7 +73,7 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition x:Name="HistoryColumn" Width="200" />
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="320" />
+                        <ColumnDefinition Width="340" />
                     </Grid.ColumnDefinitions>
 
                     <Border x:Name="HistoryPanel"
@@ -68,22 +83,33 @@
                             Background="{ThemeResource ToolboxCardBrush}"
                             BorderBrush="{ThemeResource ToolboxCardStrokeBrush}"
                             BorderThickness="1">
-                        <Grid>
+                        <Grid RowSpacing="8">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
-                            <TextBlock x:Name="HistoryHeader"
-                                       Text="Recent searches"
-                                       Style="{StaticResource MutedCaptionStyle}"
-                                       Foreground="{ThemeResource ToolboxTextSecondaryBrush}"
-                                       Margin="0,0,0,8" />
+                            <Grid>
+                                <TextBlock x:Name="HistoryHeader"
+                                           Text="Recent searches"
+                                           Style="{StaticResource MutedCaptionStyle}"
+                                           Foreground="{ThemeResource ToolboxTextSecondaryBrush}"
+                                           VerticalAlignment="Center" />
+                                <HyperlinkButton x:Name="ClearHistoryButton"
+                                                 Content="Clear"
+                                                 Padding="4,0"
+                                                 FontSize="12"
+                                                 HorizontalAlignment="Right"
+                                                 Click="ClearHistoryButton_Click"
+                                                 AutomationProperties.Name="Clear search history" />
+                            </Grid>
                             <ListView x:Name="HistoryList"
                                       Grid.Row="1"
                                       Background="Transparent"
                                       Foreground="{ThemeResource ToolboxTextPrimaryBrush}"
-                                      DoubleTapped="HistoryList_DoubleTapped"
-                                      SelectionMode="Single" />
+                                      SelectionMode="None"
+                                      IsItemClickEnabled="True"
+                                      ItemClick="HistoryList_ItemClick"
+                                      AutomationProperties.Name="Recent searches" />
                         </Grid>
                     </Border>
 
@@ -109,29 +135,43 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBox x:Name="SearchBox"
                                          PlaceholderText="Computer name, description, or username"
-                                         KeyDown="SearchBox_KeyDown" />
+                                         MaxLength="256"
+                                         KeyDown="SearchBox_KeyDown"
+                                         AutomationProperties.Name="Search text" />
                                 <ComboBox x:Name="PresetCombo"
                                           Grid.Column="1"
                                           MinWidth="140"
-                                          SelectionChanged="PresetCombo_SelectionChanged" />
+                                          SelectionChanged="PresetCombo_SelectionChanged"
+                                          AutomationProperties.Name="Search preset" />
                                 <Button x:Name="SearchButton"
                                         Grid.Column="2"
                                         Content="Search"
                                         Style="{StaticResource ToolboxAccentButtonStyle}"
                                         Click="SearchButton_Click" />
+                                <Button x:Name="CancelSearchButton"
+                                        Grid.Column="2"
+                                        Content="Cancel"
+                                        Visibility="Collapsed"
+                                        Click="CancelSearchButton_Click" />
                                 <ProgressRing x:Name="SearchProgress"
                                               Grid.Column="3"
                                               Width="28"
                                               Height="28"
                                               IsActive="False"
-                                              Visibility="Collapsed" />
+                                              Visibility="Collapsed"
+                                              AutomationProperties.Name="Searching" />
                             </Grid>
 
-                            <TextBlock x:Name="ResultsHint"
-                                       Grid.Row="1"
-                                       Text="Double-click a row for OS info and ping results."
-                                       Style="{StaticResource MutedCaptionStyle}"
-                                       Foreground="{ThemeResource ToolboxTextSecondaryBrush}" />
+                            <Grid Grid.Row="1">
+                                <TextBlock x:Name="ResultsHint"
+                                           Text="Select a computer to load OS info and ping results."
+                                           Style="{StaticResource MutedCaptionStyle}"
+                                           Foreground="{ThemeResource ToolboxTextSecondaryBrush}" />
+                                <TextBlock x:Name="ResultCountText"
+                                           HorizontalAlignment="Right"
+                                           Style="{StaticResource MutedCaptionStyle}"
+                                           Foreground="{ThemeResource ToolboxTextSecondaryBrush}" />
+                            </Grid>
 
                             <Grid Grid.Row="2">
                                 <ListView x:Name="ResultsList"
@@ -140,7 +180,8 @@
                                           SelectionMode="Single"
                                           SelectionChanged="ResultsList_SelectionChanged"
                                           DoubleTapped="ResultsList_DoubleTapped"
-                                          IsItemClickEnabled="True">
+                                          KeyDown="ResultsList_KeyDown"
+                                          AutomationProperties.Name="Search results">
                                     <ListView.ItemContainerStyle>
                                         <Style TargetType="ListViewItem">
                                             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -152,34 +193,35 @@
                                     <ListView.Header>
                                         <Grid Padding="12,8" ColumnSpacing="16">
                                             <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="200" />
+                                                <ColumnDefinition Width="180" />
                                                 <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="170" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Text="Computer"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="{ThemeResource ToolboxTextPrimaryBrush}" />
-                                            <TextBlock Grid.Column="1"
-                                                       Text="Description"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="{ThemeResource ToolboxTextPrimaryBrush}" />
+                                            <TextBlock Text="Computer" FontWeight="SemiBold" Foreground="{ThemeResource ToolboxTextPrimaryBrush}" />
+                                            <TextBlock Grid.Column="1" Text="Description" FontWeight="SemiBold" Foreground="{ThemeResource ToolboxTextPrimaryBrush}" />
+                                            <TextBlock Grid.Column="2" Text="Operating system" FontWeight="SemiBold" Foreground="{ThemeResource ToolboxTextPrimaryBrush}" />
                                         </Grid>
                                     </ListView.Header>
                                     <ListView.ItemTemplate>
                                         <DataTemplate x:DataType="models:ComputerItem">
-                                            <Grid Padding="4,6" ColumnSpacing="16">
+                                            <Grid Padding="4,6" ColumnSpacing="16" AutomationProperties.Name="{x:Bind Name}">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="200" />
+                                                    <ColumnDefinition Width="180" />
                                                     <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="170" />
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock Text="{x:Bind Name}"
                                                            FontWeight="SemiBold"
                                                            Foreground="{ThemeResource ToolboxTextPrimaryBrush}"
-                                                           TextWrapping="NoWrap"
                                                            TextTrimming="CharacterEllipsis" />
                                                 <TextBlock Grid.Column="1"
                                                            Text="{x:Bind Description}"
                                                            Foreground="{ThemeResource ToolboxTextSecondaryBrush}"
-                                                           TextWrapping="NoWrap"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           ToolTipService.ToolTip="{x:Bind Description}" />
+                                                <TextBlock Grid.Column="2"
+                                                           Text="{x:Bind OperatingSystemDisplay}"
+                                                           Foreground="{ThemeResource ToolboxTextSecondaryBrush}"
                                                            TextTrimming="CharacterEllipsis" />
                                             </Grid>
                                         </DataTemplate>
@@ -203,85 +245,119 @@
                             BorderBrush="{ThemeResource ToolboxCardStrokeBrush}"
                             BorderThickness="1">
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
-                            <StackPanel Spacing="4">
-                                <TextBlock Text="Details"
-                                           Style="{StaticResource SectionTitleStyle}"
-                                           Foreground="{ThemeResource ToolboxTextPrimaryBrush}" />
-                                <TextBlock Style="{StaticResource DetailLabelStyle}"
-                                           Foreground="{ThemeResource ToolboxTextSecondaryBrush}"
-                                           Text="Computer" />
-                                <TextBlock x:Name="DetailName"
-                                           Style="{StaticResource DetailValueStyle}"
-                                           Foreground="{ThemeResource ToolboxTextPrimaryBrush}"
-                                           Text="—" />
+                            <StackPanel Spacing="4" Padding="0,0,8,0">
+                                <Grid>
+                                    <TextBlock Text="Details"
+                                               Style="{StaticResource SectionTitleStyle}"
+                                               Foreground="{ThemeResource ToolboxTextPrimaryBrush}"
+                                               AutomationProperties.HeadingLevel="Level2" />
+                                    <ProgressRing x:Name="DetailProgress"
+                                                  Width="20"
+                                                  Height="20"
+                                                  HorizontalAlignment="Right"
+                                                  IsActive="False"
+                                                  Visibility="Collapsed"
+                                                  AutomationProperties.Name="Loading details" />
+                                </Grid>
 
-                                <TextBlock Style="{StaticResource DetailLabelStyle}"
-                                           Foreground="{ThemeResource ToolboxTextSecondaryBrush}"
-                                           Text="Operating system" />
-                                <TextBlock x:Name="DetailOs"
-                                           Style="{StaticResource DetailValueStyle}"
-                                           Foreground="{ThemeResource ToolboxTextPrimaryBrush}"
-                                           Text="—" />
-
-                                <TextBlock Style="{StaticResource DetailLabelStyle}"
-                                           Foreground="{ThemeResource ToolboxTextSecondaryBrush}"
-                                           Text="OS version" />
-                                <TextBlock x:Name="DetailOsVersion"
-                                           Style="{StaticResource DetailValueStyle}"
-                                           Foreground="{ThemeResource ToolboxTextPrimaryBrush}"
-                                           Text="—" />
-
-                                <TextBlock Style="{StaticResource DetailLabelStyle}"
-                                           Foreground="{ThemeResource ToolboxTextSecondaryBrush}"
-                                           Text="Last logged-on user" />
-                                <TextBlock x:Name="DetailLastUser"
-                                           Style="{StaticResource DetailValueStyle}"
-                                           Foreground="{ThemeResource ToolboxTextPrimaryBrush}"
-                                           Text="—" />
-
+                                <TextBlock Style="{StaticResource DetailLabelStyle}" Foreground="{ThemeResource ToolboxTextSecondaryBrush}" Text="Computer" />
                                 <Grid ColumnSpacing="8" Margin="0,0,0,12">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <StackPanel>
-                                        <TextBlock Style="{StaticResource DetailLabelStyle}"
-                                                   Foreground="{ThemeResource ToolboxTextSecondaryBrush}"
-                                                   Text="LAPS" />
-                                        <TextBlock x:Name="DetailLaps"
-                                                   Style="{StaticResource DetailValueStyle}"
-                                                   Foreground="{ThemeResource ToolboxTextPrimaryBrush}"
-                                                   Margin="0"
-                                                   Text="—" />
-                                    </StackPanel>
-                                    <Button Grid.Column="1"
-                                            Content="Copy"
-                                            VerticalAlignment="Bottom"
-                                            Click="CopyLaps_Click" />
+                                    <TextBlock x:Name="DetailName"
+                                               Style="{StaticResource DetailValueStyle}"
+                                               Foreground="{ThemeResource ToolboxTextPrimaryBrush}"
+                                               FontWeight="SemiBold"
+                                               Margin="0"
+                                               IsTextSelectionEnabled="True"
+                                               Text="—" />
+                                    <Button x:Name="CopyNameButton"
+                                            Grid.Column="1"
+                                            Padding="6"
+                                            Click="CopyComputerName_Click"
+                                            ToolTipService.ToolTip="Copy computer name"
+                                            AutomationProperties.Name="Copy computer name">
+                                        <FontIcon Glyph="&#xE8C8;" FontSize="14" />
+                                    </Button>
                                 </Grid>
 
-                                <Border Height="1" Background="{ThemeResource ToolboxDividerBrush}" Margin="0,4,0,12" />
+                                <TextBlock Style="{StaticResource DetailLabelStyle}" Foreground="{ThemeResource ToolboxTextSecondaryBrush}" Text="Directory OS" />
+                                <TextBlock x:Name="DetailAdOs" Style="{StaticResource DetailValueStyle}" Foreground="{ThemeResource ToolboxTextPrimaryBrush}" Text="—" />
 
-                                <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,8">
-                                    <Ellipse x:Name="PingDot" Width="12" Height="12" Fill="{ThemeResource ToolboxSubtleFillBrush}" />
+                                <TextBlock Style="{StaticResource DetailLabelStyle}" Foreground="{ThemeResource ToolboxTextSecondaryBrush}" Text="Last directory logon (approximate)" />
+                                <TextBlock x:Name="DetailLastLogon" Style="{StaticResource DetailValueStyle}" Foreground="{ThemeResource ToolboxTextPrimaryBrush}" Text="—" />
+
+                                <TextBlock Style="{StaticResource DetailLabelStyle}" Foreground="{ThemeResource ToolboxTextSecondaryBrush}" Text="Installed OS" />
+                                <TextBlock x:Name="DetailOs" Style="{StaticResource DetailValueStyle}" Foreground="{ThemeResource ToolboxTextPrimaryBrush}" Text="—" />
+
+                                <TextBlock Style="{StaticResource DetailLabelStyle}" Foreground="{ThemeResource ToolboxTextSecondaryBrush}" Text="OS version" />
+                                <TextBlock x:Name="DetailOsVersion" Style="{StaticResource DetailValueStyle}" Foreground="{ThemeResource ToolboxTextPrimaryBrush}" Text="—" />
+
+                                <TextBlock Style="{StaticResource DetailLabelStyle}" Foreground="{ThemeResource ToolboxTextSecondaryBrush}" Text="Last logged-on user" />
+                                <TextBlock x:Name="DetailLastUser" Style="{StaticResource DetailValueStyle}" Foreground="{ThemeResource ToolboxTextPrimaryBrush}" IsTextSelectionEnabled="True" Text="—" />
+
+                                <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,12">
+                                    <Grid Width="12" Height="12" VerticalAlignment="Center" AutomationProperties.AccessibilityView="Raw">
+                                        <Ellipse x:Name="PingDotUnknown" Fill="{ThemeResource ToolboxSubtleFillBrush}" />
+                                        <Ellipse x:Name="PingDotOnline" Fill="{ThemeResource SystemFillColorSuccessBrush}" Visibility="Collapsed" />
+                                        <Ellipse x:Name="PingDotOffline" Fill="{ThemeResource SystemFillColorCriticalBrush}" Visibility="Collapsed" />
+                                    </Grid>
                                     <TextBlock x:Name="PingSummary"
                                                Text="Ping: —"
                                                Foreground="{ThemeResource ToolboxTextPrimaryBrush}"
                                                VerticalAlignment="Center" />
                                 </StackPanel>
-                                <TextBlock x:Name="PingDetails"
+
+                                <Border Height="1" Background="{ThemeResource ToolboxDividerBrush}" Margin="0,0,0,12" />
+
+                                <TextBlock Text="Local admin password (LAPS)"
+                                           FontWeight="SemiBold"
+                                           Foreground="{ThemeResource ToolboxTextPrimaryBrush}"
+                                           AutomationProperties.HeadingLevel="Level3" />
+                                <TextBlock x:Name="DetailLaps"
+                                           FontFamily="{StaticResource ToolboxMonoFont}"
+                                           FontSize="16"
+                                           Margin="0,4,0,2"
+                                           Foreground="{ThemeResource ToolboxTextPrimaryBrush}"
+                                           IsTextSelectionEnabled="False"
+                                           Text="Not retrieved"
+                                           AutomationProperties.Name="LAPS password" />
+                                <TextBlock x:Name="LapsInfoText"
                                            Style="{StaticResource MutedCaptionStyle}"
                                            Foreground="{ThemeResource ToolboxTextSecondaryBrush}"
-                                           Margin="0,0,0,12"
-                                           Text="" />
+                                           TextWrapping="WrapWholeWords"
+                                           Margin="0,0,0,8" />
+                                <Grid ColumnSpacing="8" Margin="0,0,0,12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button x:Name="ShowLapsButton"
+                                            Content="Show"
+                                            HorizontalAlignment="Stretch"
+                                            Click="ShowLapsButton_Click"
+                                            AutomationProperties.Name="Show LAPS password" />
+                                    <Button x:Name="CopyLapsButton"
+                                            Grid.Column="1"
+                                            Content="Copy"
+                                            HorizontalAlignment="Stretch"
+                                            Click="CopyLapsButton_Click"
+                                            AutomationProperties.Name="Copy LAPS password" />
+                                </Grid>
 
-                                <ProgressRing x:Name="DetailProgress" Width="32" Height="32" IsActive="False" Visibility="Collapsed" Margin="0,0,0,12" />
+                                <Border Height="1" Background="{ThemeResource ToolboxDividerBrush}" Margin="0,0,0,12" />
 
                                 <TextBlock Text="Remote tools"
                                            FontWeight="SemiBold"
                                            Foreground="{ThemeResource ToolboxTextPrimaryBrush}"
-                                           Margin="0,4,0,8" />
-                                <ComboBox x:Name="RemoteToolCombo" HorizontalAlignment="Stretch" Margin="0,0,0,8" />
+                                           Margin="0,0,0,8"
+                                           AutomationProperties.HeadingLevel="Level3" />
+                                <ComboBox x:Name="RemoteToolCombo"
+                                          HorizontalAlignment="Stretch"
+                                          Margin="0,0,0,8"
+                                          AutomationProperties.Name="Remote tool" />
                                 <Button x:Name="RemoteButton"
                                         Content="Remote in"
                                         Style="{StaticResource ToolboxAccentButtonStyle}"
@@ -296,11 +372,6 @@
                                         </ItemsPanelTemplate>
                                     </ItemsControl.ItemsPanel>
                                 </ItemsControl>
-
-                                <Button Content="Copy computer name"
-                                        HorizontalAlignment="Stretch"
-                                        Click="CopyComputerName_Click"
-                                        Margin="0,8,0,0" />
                             </StackPanel>
                         </ScrollViewer>
                     </Border>
@@ -320,8 +391,9 @@
                     <StackPanel Spacing="12" MaxWidth="360">
                         <TextBlock Text="Streaming"
                                    Style="{StaticResource SectionTitleStyle}"
-                                   Foreground="{ThemeResource ToolboxTextPrimaryBrush}" />
-                        <TextBlock Text="Select a streaming endpoint, then connect or open the web tools."
+                                   Foreground="{ThemeResource ToolboxTextPrimaryBrush}"
+                                   AutomationProperties.HeadingLevel="Level2" />
+                        <TextBlock Text="Pick a streaming PC, then connect to it or open its web tools."
                                    Style="{StaticResource MutedCaptionStyle}"
                                    Foreground="{ThemeResource ToolboxTextSecondaryBrush}"
                                    TextWrapping="WrapWholeWords" />
@@ -336,21 +408,18 @@
                                 HorizontalAlignment="Stretch"
                                 Click="StreamingConnectButton_Click" />
                         <Button x:Name="StreamingViewButton"
-                                Content="View Stream"
+                                Content="View stream"
                                 HorizontalAlignment="Stretch"
                                 Click="StreamingViewButton_Click" />
                         <Button x:Name="StreamingControlButton"
-                                Content="Control App"
+                                Content="Control app"
                                 HorizontalAlignment="Stretch"
                                 Click="StreamingControlButton_Click" />
 
                         <Border Height="1" Background="{ThemeResource ToolboxDividerBrush}" Margin="0,4" />
 
-                        <TextBlock Text="Config"
-                                   Style="{StaticResource MutedCaptionStyle}"
-                                   Foreground="{ThemeResource ToolboxTextSecondaryBrush}" />
                         <Button x:Name="StreamingPasswordButton"
-                                Content="Change Stream Password"
+                                Content="Change stream password"
                                 HorizontalAlignment="Stretch"
                                 Click="StreamingPasswordButton_Click" />
                     </StackPanel>
@@ -359,7 +428,7 @@
         </TabView>
 
         <Border x:Name="StatusPanel"
-                Grid.Row="2"
+                Grid.Row="3"
                 Padding="16,8"
                 Background="{ThemeResource ToolboxLayerBrush}"
                 BorderBrush="{ThemeResource ToolboxDividerBrush}"
@@ -369,19 +438,39 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="72" />
                 </Grid.RowDefinitions>
-                <TextBlock Text="Status"
-                           Style="{StaticResource MutedCaptionStyle}"
-                           Foreground="{ThemeResource ToolboxTextSecondaryBrush}"
-                           Margin="0,0,0,4" />
+                <Grid Margin="0,0,0,4" ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Status"
+                               Style="{StaticResource MutedCaptionStyle}"
+                               Foreground="{ThemeResource ToolboxTextSecondaryBrush}" />
+                    <TextBlock x:Name="LatestStatusText"
+                               Grid.Column="1"
+                               Style="{StaticResource MutedCaptionStyle}"
+                               Foreground="{ThemeResource ToolboxTextSecondaryBrush}"
+                               TextTrimming="CharacterEllipsis"
+                               AutomationProperties.LiveSetting="Polite"
+                               AutomationProperties.Name="Latest status" />
+                    <HyperlinkButton x:Name="OpenLogButton"
+                                     Grid.Column="2"
+                                     Content="Open log folder"
+                                     Padding="4,0"
+                                     FontSize="12"
+                                     Click="OpenLogButton_Click" />
+                </Grid>
                 <ListView x:Name="StatusList"
                           Grid.Row="1"
                           Background="Transparent"
                           Foreground="{ThemeResource ToolboxTextSecondaryBrush}"
-                          SelectionMode="None">
+                          SelectionMode="None"
+                          AutomationProperties.Name="Status history">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:StatusLogEntry">
                             <TextBlock Text="{x:Bind Display}"
-                                       FontFamily="Consolas"
+                                       FontFamily="{StaticResource ToolboxMonoFont}"
                                        FontSize="12"
                                        Foreground="{ThemeResource ToolboxTextSecondaryBrush}" />
                         </DataTemplate>

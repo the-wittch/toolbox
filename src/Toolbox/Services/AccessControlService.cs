@@ -1,4 +1,5 @@
 using System.Security.Principal;
+using Toolbox.Security;
 
 namespace Toolbox.Services;
 
@@ -11,19 +12,21 @@ public sealed class AccessControlService
         _settings = settings;
     }
 
-    public bool HasAccess()
+    public string DenyMessage => _settings.Current.AccessControl.DenyMessage;
+
+    public AccessDecision Evaluate()
     {
-        var config = _settings.Current.AccessControl;
-        if (!config.Enabled || config.AllowedGroups.Count == 0)
+        if (_settings.Policy.ReadError is { } error)
         {
-            return true;
+            return new AccessDecision(false, "Machine policy could not be read: " + error);
         }
 
+        var config = _settings.Current.AccessControl;
         using var identity = WindowsIdentity.GetCurrent();
         var principal = new WindowsPrincipal(identity);
-        return config.AllowedGroups.Any(group =>
-            !string.IsNullOrWhiteSpace(group) && principal.IsInRole(group));
+        return AccessPolicy.Evaluate(config.Enabled, config.AllowedGroups, group =>
+            AccessPolicy.LooksLikeSid(group)
+                ? principal.IsInRole(new SecurityIdentifier(group))
+                : principal.IsInRole(group));
     }
-
-    public string DenyMessage => _settings.Current.AccessControl.DenyMessage;
 }

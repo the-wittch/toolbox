@@ -1,10 +1,26 @@
+using System.Diagnostics;
 using System.DirectoryServices;
+using System.Runtime.InteropServices;
+using Toolbox.Configuration;
+using Toolbox.Ldap;
 using Toolbox.Models;
 
 namespace Toolbox.Services;
 
+public sealed class SearchInputException : Exception
+{
+    public SearchInputException(string message)
+        : base(message)
+    {
+    }
+}
+
+public sealed record SearchOutcome(IReadOnlyList<ComputerItem> Items, bool Truncated, TimeSpan Elapsed);
+
 public sealed class AdComputerSearcher
 {
+    private const int SizeLimitExceeded = unchecked((int)0x80072023);
+
     private readonly SettingsService _settings;
 
     public AdComputerSearcher(SettingsService settings)
@@ -12,103 +28,104 @@ public sealed class AdComputerSearcher
         _settings = settings;
     }
 
-    public Task<IReadOnlyList<ComputerItem>> SearchAsync(string query, CancellationToken cancellationToken = default)
+    public Task<SearchOutcome> SearchAsync(string query, CancellationToken cancellationToken)
     {
-        return Task.Run(() => Search(query, cancellationToken), cancellationToken);
-    }
-
-    private IReadOnlyList<ComputerItem> Search(string query, CancellationToken cancellationToken)
-    {
-        var ldap = _settings.Current.Ldap;
-        var search = _settings.Current.Search;
-        var trimmed = (query ?? string.Empty).Trim();
-
-        if (string.IsNullOrWhiteSpace(trimmed))
+        var settings = _settings.Current;
+        if (!ComputerSearchQueryBuilder.TryBuild(query, settings.Ldap, settings.Search.ComputerNamePrefixes, out var built, out var error))
         {
-            return Array.Empty<ComputerItem>();
+            throw new SearchInputException(error!);
         }
 
-        var isComputerNameSearch = search.ComputerNamePrefixes.Any(prefix =>
-            !string.IsNullOrWhiteSpace(prefix) &&
-            trimmed.Contains(prefix, StringComparison.OrdinalIgnoreCase));
+        var work = Task.Run(() => Search(built!, settings.Ldap, cancellationToken), CancellationToken.None);
+        return work.WaitAsync(cancellationToken);
+    }
 
-        var path = ldap.RootOu.StartsWith("LDAP://", StringComparison.OrdinalIgnoreCase)
-            ? ldap.RootOu
-            : "LDAP://" + ldap.RootOu;
+    private static SearchOutcome Search(ComputerSearchQuery query, LdapSettings ldap, CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var maxResults = SettingsLimits.MaxResults(ldap);
+        var timeout = SettingsLimits.SearchTimeout(ldap);
+        var path = LdapPath.ForSearchRoot(ldap);
 
-        using var entry = new DirectoryEntry(path);
-        using var directorySearcher = new DirectorySearcher(entry)
+        using var root = DirectoryConnection.Open(path, ldap);
+        using var searcher = new DirectorySearcher(root, query.Filter, Attributes(ldap), SearchScope.Subtree)
         {
-            PageSize = Math.Max(1, ldap.PageSize),
-            Filter = $"(&{ldap.ComputerObjectFilter})"
+            PageSize = SettingsLimits.PageSize(ldap),
+            SizeLimit = maxResults + 1,
+            ServerTimeLimit = timeout,
+            ClientTimeout = timeout + TimeSpan.FromSeconds(5),
+            CacheResults = false
         };
 
-        foreach (var property in ldap.PropertiesToLoad.Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            directorySearcher.PropertiesToLoad.Add(property);
-        }
-
-        var results = new List<ComputerItem>();
+        var items = new List<ComputerItem>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var truncated = false;
 
-        using var searchResults = directorySearcher.FindAll();
-        foreach (SearchResult result in searchResults)
+        using var results = searcher.FindAll();
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            foreach (SearchResult result in results)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
 
-            var name = ReadProperty(result, ldap.NameAttribute);
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                continue;
-            }
+                if (items.Count >= maxResults)
+                {
+                    truncated = true;
+                    break;
+                }
 
-            var description = ReadProperty(result, ldap.DescriptionAttribute);
-            if (string.IsNullOrWhiteSpace(description))
-            {
-                description = ldap.MissingDescriptionLabel;
+                var item = ToItem(result, ldap);
+                if (item is not null && seen.Add(item.Name))
+                {
+                    items.Add(item);
+                }
             }
-
-            bool matches;
-            if (isComputerNameSearch)
-            {
-                matches = name.Contains(trimmed, StringComparison.OrdinalIgnoreCase);
-            }
-            else
-            {
-                matches = description.Contains(trimmed, StringComparison.OrdinalIgnoreCase);
-            }
-
-            if (!matches || !seen.Add(name))
-            {
-                continue;
-            }
-
-            results.Add(new ComputerItem
-            {
-                Name = name,
-                Description = description,
-                OperatingSystem = ReadProperty(result, "operatingSystem"),
-                OperatingSystemVersion = ReadProperty(result, "operatingSystemVersion")
-            });
+        }
+        catch (COMException ex) when (ex.HResult == SizeLimitExceeded)
+        {
+            truncated = true;
         }
 
-        return results
-            .OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        cancellationToken.ThrowIfCancellationRequested();
+        items.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+        return new SearchOutcome(items, truncated, stopwatch.Elapsed);
     }
 
-    private static string? ReadProperty(SearchResult result, string propertyName)
+    private static string[] Attributes(LdapSettings ldap) => new[]
     {
-        if (string.IsNullOrWhiteSpace(propertyName))
+        ldap.NameAttribute, ldap.DescriptionAttribute, "operatingSystem", "operatingSystemVersion",
+        "distinguishedName", "dNSHostName", "lastLogonTimestamp"
+    }.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    private static ComputerItem? ToItem(SearchResult result, LdapSettings ldap)
+    {
+        var name = ReadString(result, ldap.NameAttribute)?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
         {
             return null;
         }
 
-        if (!result.Properties.Contains(propertyName) || result.Properties[propertyName].Count == 0)
+        var description = ReadString(result, ldap.DescriptionAttribute);
+        return new ComputerItem
         {
-            return null;
-        }
-
-        return result.Properties[propertyName][0]?.ToString();
+            Name = name,
+            Description = string.IsNullOrWhiteSpace(description) ? ldap.MissingDescriptionLabel : description,
+            OperatingSystem = ReadString(result, "operatingSystem"),
+            OperatingSystemVersion = ReadString(result, "operatingSystemVersion"),
+            DistinguishedName = ReadString(result, "distinguishedName") ?? string.Empty,
+            DnsHostName = ReadString(result, "dNSHostName"),
+            LastLogon = Read(result, "lastLogonTimestamp") is long fileTime ? WindowsVersionFormatter.FromFileTime(fileTime) : null,
+            HasValidHostName = HostNameRules.IsValidComputerName(name)
+        };
     }
+
+    private static object? Read(SearchResult result, string property) =>
+        result.Properties.Contains(property) && result.Properties[property].Count > 0
+            ? result.Properties[property][0]
+            : null;
+
+    private static string? ReadString(SearchResult result, string property) => Read(result, property)?.ToString();
 }

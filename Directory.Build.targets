@@ -2,7 +2,7 @@
 
   <Target Name="ToolboxAddProjectPriToPublish"
           BeforeTargets="ComputeResolvedFilesToPublishList"
-          Condition="'$(WindowsPackageType)' == 'None' or '$(WindowsPackageType)' == ''">
+          Condition="'$(UseWinUI)' == 'true' and ('$(WindowsPackageType)' == 'None' or '$(WindowsPackageType)' == '')">
     <PropertyGroup>
       <_ToolboxPriCandidate Condition="'$(ProjectPriFullPath)' != ''">$(ProjectPriFullPath)</_ToolboxPriCandidate>
       <_ToolboxPriCandidate Condition="'$(_ToolboxPriCandidate)' == '' and Exists('$(OutDir)$(AssemblyName).pri')">$(OutDir)$(AssemblyName).pri</_ToolboxPriCandidate>
@@ -31,7 +31,7 @@
 
   <Target Name="ToolboxCopyXamlPayloadAfterPublish"
           AfterTargets="Publish"
-          Condition="'$(WindowsPackageType)' == 'None' or '$(WindowsPackageType)' == ''">
+          Condition="'$(UseWinUI)' == 'true' and ('$(WindowsPackageType)' == 'None' or '$(WindowsPackageType)' == '')">
     <PropertyGroup>
       <_ToolboxPublishDir Condition="'$(PublishDir)' != ''">$(PublishDir)</_ToolboxPublishDir>
       <_ToolboxBuildOut Condition="'$(OutDir)' != ''">$(OutDir)</_ToolboxBuildOut>

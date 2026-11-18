@@ -1,7 +1,9 @@
-using System.DirectoryServices;
-using System.DirectoryServices.AccountManagement;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using Microsoft.Win32;
+using Toolbox.Configuration;
+using Toolbox.Diagnostics;
+using Toolbox.Ldap;
 using Toolbox.Models;
 
 namespace Toolbox.Services;
@@ -15,119 +17,102 @@ public sealed class ComputerInfoService
         _settings = settings;
     }
 
-    public Task<ComputerDetail> GetDetailAsync(string computerName, CancellationToken cancellationToken = default)
+    public async Task<ComputerDetail> GetDetailAsync(ComputerItem item, CancellationToken cancellationToken)
     {
-        return Task.Run(() =>
+        var detail = new ComputerDetail { ComputerName = item.Name };
+        if (!item.HasValidHostName)
         {
-            var detail = new ComputerDetail { ComputerName = computerName };
-
-            try
-            {
-                var os = GetRemoteWindowsOs(computerName);
-                var comma = os.IndexOf(',');
-                if (comma >= 0)
-                {
-                    detail.OperatingSystem = os[..comma].Trim();
-                    detail.OperatingSystemVersion = os[(comma + 1)..].Trim();
-                }
-                else
-                {
-                    detail.OperatingSystem = os;
-                }
-            }
-            catch
-            {
-                detail.OperatingSystem = "Not found";
-                detail.OperatingSystemVersion = "Not found";
-            }
-
-            try
-            {
-                detail.LastLoggedOnUser = GetLastLoggedOnUser(computerName);
-            }
-            catch
-            {
-                detail.LastLoggedOnUser = "Not found";
-            }
-
-            try
-            {
-                detail.LapsPassword = GetLapsPassword(computerName);
-            }
-            catch
-            {
-                detail.LapsPassword = "N/A";
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            detail.Ping = PingHost(computerName);
+            detail.OperatingSystem = detail.OperatingSystemVersion = detail.LastLoggedOnUser = "Not queried";
+            detail.Ping = new PingResult { Status = "Not queried (invalid host name)" };
             return detail;
-        }, cancellationToken);
+        }
+
+        var ping = PingAsync(item.Name, cancellationToken);
+        var registry = ReadRegistryAsync(item.Name, cancellationToken);
+        detail.Ping = await ping.ConfigureAwait(false);
+        var snapshot = await registry.ConfigureAwait(false);
+        detail.OperatingSystem = snapshot.OperatingSystem;
+        detail.OperatingSystemVersion = snapshot.Version;
+        detail.LastLoggedOnUser = snapshot.LastUser;
+        return detail;
     }
 
-    public PingResult PingHost(string host)
+    public async Task<PingResult> PingAsync(string host, CancellationToken cancellationToken)
     {
-        var pingSettings = _settings.Current.Ping;
+        var ping = _settings.Current.Ping;
         try
         {
             using var pinger = new Ping();
-            var buffer = new byte[Math.Clamp(pingSettings.BufferSize, 1, 65500)];
-            var reply = pinger.Send(host, Math.Max(1, pingSettings.TimeoutMs), buffer);
-            if (reply is null)
-            {
-                return new PingResult { IsReachable = false, Status = "Error" };
-            }
-
+            var reply = await pinger.SendPingAsync(
+                host,
+                SettingsLimits.PingTimeout(ping),
+                new byte[SettingsLimits.PingBuffer(ping)],
+                null,
+                cancellationToken).ConfigureAwait(false);
             return new PingResult
             {
                 IsReachable = reply.Status == IPStatus.Success,
-                Status = reply.Status.ToString(),
+                Status = reply.Status == IPStatus.TimedOut ? "No reply" : reply.Status.ToString(),
                 RoundtripTimeMs = reply.RoundtripTime
             };
         }
-        catch (PingException)
+        catch (PingException ex)
         {
-            return new PingResult { IsReachable = false, Status = "Error" };
+            return new PingResult { Status = ex.InnerException is SocketException ? "Name not resolved" : "Error" };
         }
     }
 
-    private static string GetRemoteWindowsOs(string pcName)
-    {
-        using var reg = RegistryKey.OpenRemoteBaseKey(RegistryHive.LocalMachine, pcName);
-        using var key = reg.OpenSubKey(@"Software\Microsoft\Windows NT\CurrentVersion\");
-        if (key is null)
-        {
-            return "Not found, Not found";
-        }
+    private sealed record RegistrySnapshot(string OperatingSystem, string Version, string LastUser);
 
-        return $"{key.GetValue("ProductName")}, {key.GetValue("CurrentVersion")}";
+    private async Task<RegistrySnapshot> ReadRegistryAsync(string host, CancellationToken cancellationToken)
+    {
+        // RegistryKey.OpenRemoteBaseKey cannot be cancelled, so stop waiting rather than block
+        var work = Task.Run(() => ReadRegistry(host), CancellationToken.None);
+        try
+        {
+            return await work.WaitAsync(SettingsLimits.RegistryTimeout(_settings.Current.Details), cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            return new RegistrySnapshot("Timed out", "Timed out", "Timed out");
+        }
     }
 
-    private static string GetLastLoggedOnUser(string pcName)
+    private static RegistrySnapshot ReadRegistry(string host)
     {
-        const string location = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI";
-        var registryView = Environment.Is64BitOperatingSystem ? RegistryView.Registry64 : RegistryView.Registry32;
-        using var hive = RegistryKey.OpenRemoteBaseKey(RegistryHive.LocalMachine, pcName, registryView);
-        using var key = hive.OpenSubKey(location);
-        var item = key?.GetValue("LastLoggedOnUser");
-        return item?.ToString() ?? "No Logon Found";
-    }
-
-    private static string GetLapsPassword(string pcName)
-    {
-        using var ctx = new PrincipalContext(ContextType.Domain);
-        var comp = ComputerPrincipal.FindByIdentity(ctx, pcName);
-        if (comp is null)
+        try
         {
-            return "N/A";
-        }
+            using var hive = RegistryKey.OpenRemoteBaseKey(RegistryHive.LocalMachine, host, RegistryView.Default);
+            string os = "Not available", version = "Not available", lastUser = "No logon recorded";
 
-        using var de = (DirectoryEntry)comp.GetUnderlyingObject();
-        if (de.Properties.Contains("ms-Mcs-AdmPwd"))
+            using (var current = hive.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion"))
+            {
+                if (current is not null)
+                {
+                    (os, version) = WindowsVersionFormatter.Format(
+                        current.GetValue("ProductName") as string,
+                        (current.GetValue("DisplayVersion") ?? current.GetValue("ReleaseId")) as string,
+                        (current.GetValue("CurrentBuildNumber") ?? current.GetValue("CurrentBuild")) as string,
+                        current.GetValue("UBR") as int?,
+                        current.GetValue("CurrentVersion") as string);
+                }
+            }
+
+            using (var logon = hive.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI"))
+            {
+                if (logon?.GetValue("LastLoggedOnUser") is string user && user.Length > 0)
+                {
+                    lastUser = user;
+                }
+            }
+
+            return new RegistrySnapshot(os, version, lastUser);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
-            return de.Properties["ms-Mcs-AdmPwd"][0]?.ToString() ?? "N/A";
+            AppLog.Warn($"Remote registry query for {host} failed.", ex);
+            var message = ErrorTranslator.Describe(ex);
+            return new RegistrySnapshot(message, "Not available", "Not available");
         }
-
-        return "N/A";
     }
 }

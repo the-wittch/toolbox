@@ -1,30 +1,44 @@
-using System.Runtime.InteropServices;
+using System.Globalization;
 using System.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Toolbox.Configuration;
+using Toolbox.Diagnostics;
 using Toolbox.Services;
 
 namespace Toolbox;
 
 public partial class App : Application
 {
+    private const uint MessageBoxIconError = 0x10;
+    private const int CrashLogsToKeep = 10;
+
     private Window? _window;
+    private SettingsLoadException? _settingsError;
 
     public static SettingsService Settings { get; } = new();
     public static AdComputerSearcher AdSearcher { get; private set; } = null!;
     public static ComputerInfoService ComputerInfo { get; private set; } = null!;
+    public static LapsService Laps { get; private set; } = null!;
     public static RemoteToolService RemoteTools { get; private set; } = null!;
     public static AccessControlService AccessControl { get; private set; } = null!;
     public static ThemeService Theme { get; private set; } = null!;
     public static UpdateService Updater { get; private set; } = null!;
     public static LocalInstallService LocalInstall { get; private set; } = null!;
-    public static SearchHistoryService SearchHistory { get; private set; } = null!;
+    public static SearchHistoryStore SearchHistory { get; private set; } = null!;
     public static StreamingService Streaming { get; private set; } = null!;
 
     public static Window? MainAppWindow => ((App)Current)._window;
 
     public App()
     {
+        AppLog.Initialize(Path.Combine(SettingsService.AppDataFolder, "logs"));
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => AppLog.Error("Unhandled exception.", e.ExceptionObject as Exception);
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            AppLog.Warn("Unobserved background task exception.", e.Exception);
+            e.SetObserved();
+        };
 
         try
         {
@@ -39,9 +53,9 @@ public partial class App : Application
                 RequestedTheme = ApplicationTheme.Dark;
             }
         }
-        catch
+        catch (SettingsLoadException ex)
         {
-
+            _settingsError = ex;
         }
 
         InitializeComponent();
@@ -50,37 +64,40 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        AppLog.Info($"Toolbox {UpdateService.CurrentVersion} starting from {AppContext.BaseDirectory} (packaged={AppDeploymentKind.IsPackaged}).");
+
+        if (_settingsError is not null)
+        {
+            AppLog.Error("Install settings could not be loaded.", _settingsError);
+            ShowFatal("Toolbox cannot start because its configuration is invalid.\n\n" +
+                      _settingsError.Message + "\n\nFile: " + _settingsError.FilePath +
+                      "\n\nAsk your administrator to fix this file.");
+            Exit();
+            return;
+        }
+
         try
         {
-            Settings.Load();
             AdSearcher = new AdComputerSearcher(Settings);
             ComputerInfo = new ComputerInfoService(Settings);
+            Laps = new LapsService(Settings);
             RemoteTools = new RemoteToolService(Settings);
             AccessControl = new AccessControlService(Settings);
             Theme = new ThemeService(Settings);
             Updater = new UpdateService(Settings);
             LocalInstall = new LocalInstallService(Settings);
-            SearchHistory = new SearchHistoryService();
+            SearchHistory = new SearchHistoryStore(Path.Combine(SettingsService.AppDataFolder, "search-history.json"));
             Streaming = new StreamingService(Settings, RemoteTools);
 
-            if (!AccessControl.HasAccess())
+            var decision = AccessControl.Evaluate();
+            if (!decision.Allowed)
             {
-                _ = ShowAccessDeniedAndExitAsync();
+                AppLog.Warn($"Access denied for {Environment.UserDomainName}\\{Environment.UserName}: {decision.Reason}");
+                ShowAccessDeniedAndExit();
                 return;
             }
 
-            try
-            {
-                _window = new MainWindow();
-            }
-            catch (Exception ex)
-            {
-
-                ReportFatalError("Toolbox failed while creating the main window", ex);
-                Exit();
-                return;
-            }
-
+            _window = new MainWindow();
             Theme.Apply(Settings.Current.Theme, _window);
             _window.Activate();
         }
@@ -91,142 +108,107 @@ public partial class App : Application
         }
     }
 
-    private Task ShowAccessDeniedAndExitAsync()
+    private void ShowAccessDeniedAndExit()
     {
         _window = new Window { Title = Settings.Current.ProgramTitle };
-        var dialogHost = new Grid();
-        _window.Content = dialogHost;
+        var host = new Grid();
+        _window.Content = host;
         _window.Activate();
 
-        dialogHost.Loaded += async (_, _) =>
+        host.Loaded += async (_, _) =>
         {
             var dialog = new ContentDialog
             {
                 Title = "Access denied",
                 Content = AccessControl.DenyMessage,
                 CloseButtonText = "Exit",
-                XamlRoot = dialogHost.XamlRoot
+                XamlRoot = host.XamlRoot
             };
             await dialog.ShowAsync();
             _window?.Close();
             Exit();
         };
-
-        return Task.CompletedTask;
     }
 
     private void OnUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
     {
-        ReportFatalError("Toolbox hit an unexpected error", e.Exception);
+        ReportFatalError("Toolbox hit an unexpected error and has to close", e.Exception);
         e.Handled = true;
         Exit();
     }
 
     private static void ReportFatalError(string title, Exception ex)
     {
+        AppLog.Error(title, ex);
         var logPath = WriteCrashLog(ex);
         var message = new StringBuilder()
             .AppendLine(title + ".")
             .AppendLine()
-            .AppendLine(ex.GetType().Name + ": " + ex.Message);
-
-        for (var inner = ex.InnerException; inner is not null; inner = inner.InnerException)
-        {
-            message.AppendLine("→ " + inner.GetType().Name + ": " + inner.Message);
-        }
-
-        message
+            .AppendLine(ErrorTranslator.Describe(ex))
             .AppendLine()
-            .AppendLine("Details were written to:")
-            .AppendLine(logPath);
+            .AppendLine("Details for your administrator were written to:")
+            .AppendLine(logPath ?? AppLog.CurrentFilePath ?? "(no log available)");
+        ShowFatal(message.ToString());
+    }
 
+    private static void ShowFatal(string text)
+    {
         try
         {
-            NativeMessageBox(message.ToString(), "Toolbox");
+            _ = NativeMethods.MessageBoxW(IntPtr.Zero, text, "Toolbox", MessageBoxIconError);
         }
-        catch
+        catch (DllNotFoundException)
         {
-
         }
     }
 
-    private static string WriteCrashLog(Exception ex)
+    private static string? WriteCrashLog(Exception ex)
     {
-        var folder = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Toolbox");
-        Directory.CreateDirectory(folder);
-        var logPath = Path.Combine(folder, "crash.log");
-
-        var body = new StringBuilder()
-            .AppendLine(DateTimeOffset.Now.ToString("u"))
-            .AppendLine("BaseDirectory: " + AppContext.BaseDirectory)
-            .AppendLine("CurrentDirectory: " + Environment.CurrentDirectory)
-            .AppendLine("Executable: " + Environment.ProcessPath)
-            .AppendLine("HResult: 0x" + ex.HResult.ToString("X8"))
-            .AppendLine("Packaged: " + AppDeploymentKind.IsPackaged);
-
-        AppendPayloadDiagnostics(body, AppContext.BaseDirectory);
-
-        body.AppendLine().AppendLine(ex.ToString());
-        for (var inner = ex.InnerException; inner is not null; inner = inner.InnerException)
+        try
         {
-            body.AppendLine()
-                .AppendLine("--- Inner ---")
-                .AppendLine(inner.GetType().FullName + ": " + inner.Message)
-                .AppendLine("HResult: 0x" + inner.HResult.ToString("X8"));
-        }
+            var folder = Path.Combine(SettingsService.AppDataFolder, "logs");
+            Directory.CreateDirectory(folder);
+            var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+            var logPath = Path.Combine(folder, $"crash-{stamp}.log");
 
-        File.WriteAllText(logPath, body.ToString());
-        return logPath;
+            var body = new StringBuilder()
+                .AppendLine(DateTimeOffset.Now.ToString("u", CultureInfo.InvariantCulture))
+                .AppendLine("Version: " + UpdateService.CurrentVersion)
+                .AppendLine("BaseDirectory: " + AppContext.BaseDirectory)
+                .AppendLine("Executable: " + Environment.ProcessPath)
+                .AppendLine("Packaged: " + AppDeploymentKind.IsPackaged)
+                .AppendLine("HResult: 0x" + ex.HResult.ToString("X8", CultureInfo.InvariantCulture));
+            AppendPayloadDiagnostics(body, AppContext.BaseDirectory);
+            body.AppendLine().AppendLine(ex.ToString());
+            File.WriteAllText(logPath, body.ToString());
+
+            foreach (var old in Directory.GetFiles(folder, "crash-*.log").OrderByDescending(f => f, StringComparer.Ordinal).Skip(CrashLogsToKeep))
+            {
+                File.Delete(old);
+            }
+
+            return logPath;
+        }
+        catch (Exception logError) when (logError is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
+    // unpackaged WinUI crashes in InitializeComponent when these are missing
     private static void AppendPayloadDiagnostics(StringBuilder body, string baseDir)
     {
-        body.AppendLine().AppendLine("--- Payload check (unpackaged WinUI needs these) ---");
-        if (string.IsNullOrWhiteSpace(baseDir) || !Directory.Exists(baseDir))
-        {
-            body.AppendLine("BaseDirectory missing.");
-            return;
-        }
-
+        body.AppendLine().AppendLine("--- Payload check ---");
         string[] required =
         [
-            "Toolbox.exe",
-            "Toolbox.pri",
-            "resources.pri",
-            "MainWindow.xbf",
-            "App.xbf",
-            "Microsoft.UI.Xaml.dll",
-            "Microsoft.WindowsAppRuntime.Bootstrap.dll"
+            "Toolbox.exe", "Toolbox.pri", "resources.pri", "MainWindow.xbf", "App.xbf",
+            "Microsoft.UI.Xaml.dll", "Microsoft.WindowsAppRuntime.Bootstrap.dll"
         ];
 
         foreach (var name in required)
         {
             var path = Path.Combine(baseDir, name);
-            body.AppendLine(File.Exists(path)
-                ? $"OK   {name} ({new FileInfo(path).Length} bytes)"
-                : $"MISS {name}");
-        }
-
-        try
-        {
-            var xbfCount = Directory.GetFiles(baseDir, "*.xbf", SearchOption.AllDirectories).Length;
-            var priCount = Directory.GetFiles(baseDir, "*.pri", SearchOption.TopDirectoryOnly).Length;
-            body.AppendLine($"xbf files: {xbfCount}");
-            body.AppendLine($"pri files (root): {priCount}");
-        }
-        catch (Exception scanEx)
-        {
-            body.AppendLine("Payload scan failed: " + scanEx.Message);
+            body.AppendLine(File.Exists(path) ? $"OK   {name} ({new FileInfo(path).Length} bytes)" : $"MISS {name}");
         }
     }
-
-    private static void NativeMessageBox(string text, string caption)
-    {
-        MessageBoxW(IntPtr.Zero, text, caption, 0x00000010);
-    }
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-    private static extern int MessageBoxW(IntPtr hWnd, string text, string caption, uint type);
 }

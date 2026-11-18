@@ -1,10 +1,9 @@
-using System.Runtime.InteropServices;
-using System.Text;
-
 namespace Toolbox.Services;
 
 public static class AppDeploymentKind
 {
+    private const int ErrorInsufficientBuffer = 122;
+
     private static readonly Lazy<bool> Packaged = new(DetectPackaged);
 
     public static bool IsPackaged => Packaged.Value;
@@ -17,24 +16,19 @@ public static class AppDeploymentKind
     {
         try
         {
-
             var length = 0;
-            var hr = GetCurrentPackageFullName(ref length, null);
-            if (hr == 122 && length > 0)
+            var hr = NativeMethods.GetCurrentPackageFullName(ref length, null);
+            if (hr != ErrorInsufficientBuffer || length <= 0)
             {
-                var sb = new StringBuilder(length);
-                hr = GetCurrentPackageFullName(ref length, sb);
-                return hr == 0 && sb.Length > 0;
+                return false;
             }
 
-            return false;
+            var name = new char[length];
+            return NativeMethods.GetCurrentPackageFullName(ref length, name) == 0 && length > 1;
         }
-        catch
+        catch (EntryPointNotFoundException)
         {
             return false;
         }
     }
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-    private static extern int GetCurrentPackageFullName(ref int packageFullNameLength, StringBuilder? packageFullName);
 }

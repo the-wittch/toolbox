@@ -1,11 +1,23 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using Toolbox.Diagnostics;
+using Toolbox.Launching;
+using Toolbox.Ldap;
 using Toolbox.Models;
 
 namespace Toolbox.Services;
 
+public sealed record LaunchResult(bool Succeeded, string Message);
+
 public sealed class RemoteToolService
 {
+    private const int ErrorElevationRequired = 740;
+
     private readonly SettingsService _settings;
+    private readonly ExecutableResolver _resolver = new(
+        File.Exists,
+        new[] { Environment.SystemDirectory, Environment.GetFolderPath(Environment.SpecialFolder.Windows) },
+        Environment.ExpandEnvironmentVariables);
 
     public RemoteToolService(SettingsService settings)
     {
@@ -14,13 +26,13 @@ public sealed class RemoteToolService
 
     public IReadOnlyList<AvailableRemoteTool> GetAvailableTools()
     {
-        var userName = Environment.UserName;
         var available = new List<AvailableRemoteTool>();
-
         foreach (var tool in _settings.Current.RemoteTools.Where(t => t.Enabled))
         {
-            var path = ResolveFirstExistingPath(tool.CandidatePaths, userName);
-            if (path is null)
+            var resolved = tool.CandidatePaths
+                .Select(path => _resolver.Resolve(path, Environment.UserName))
+                .FirstOrDefault(r => r.Succeeded);
+            if (resolved is null)
             {
                 continue;
             }
@@ -28,8 +40,8 @@ public sealed class RemoteToolService
             available.Add(new AvailableRemoteTool
             {
                 Id = tool.Id,
-                Label = tool.Label,
-                ExecutablePath = path,
+                Label = string.IsNullOrWhiteSpace(tool.Label) ? tool.Id : tool.Label,
+                ExecutablePath = resolved.Path!,
                 ArgumentsTemplate = tool.Arguments,
                 PreferAsDefault = tool.PreferAsDefault
             });
@@ -38,51 +50,77 @@ public sealed class RemoteToolService
         return available;
     }
 
-    public void LaunchRemote(AvailableRemoteTool tool, string computerName)
+    public LaunchResult LaunchRemote(AvailableRemoteTool tool, string computerName) =>
+        Launch(tool.Label, tool.ExecutablePath, tool.ArgumentsTemplate, computerName);
+
+    public LaunchResult LaunchDetailAction(DetailActionDefinition action, string computerName)
     {
-        var args = ExpandTokens(tool.ArgumentsTemplate, computerName);
-        Process.Start(new ProcessStartInfo
-        {
-            FileName = tool.ExecutablePath,
-            Arguments = args,
-            UseShellExecute = true
-        });
+        var resolved = _resolver.Resolve(action.Executable, Environment.UserName);
+        return resolved.Succeeded
+            ? Launch(action.Label, resolved.Path!, action.Arguments, computerName)
+            : new LaunchResult(false, $"{action.Label}: {resolved.Error}");
     }
 
-    public void LaunchDetailAction(DetailActionDefinition action, string computerName)
+    private static LaunchResult Launch(string label, string executable, string argumentTemplate, string computerName)
     {
-        var executable = ExpandTokens(action.Executable, computerName);
-        var args = ExpandTokens(action.Arguments, computerName);
-        Process.Start(new ProcessStartInfo
+        if (!HostNameRules.IsValidComputerName(computerName))
         {
-            FileName = executable,
-            Arguments = args,
-            UseShellExecute = true
-        });
-    }
-
-    private static string? ResolveFirstExistingPath(IEnumerable<string> candidates, string userName)
-    {
-        foreach (var candidate in candidates)
-        {
-            var expanded = candidate
-                .Replace("{userName}", userName, StringComparison.OrdinalIgnoreCase)
-                .Replace("%USERNAME%", userName, StringComparison.OrdinalIgnoreCase);
-
-            expanded = Environment.ExpandEnvironmentVariables(expanded);
-            if (File.Exists(expanded))
-            {
-                return expanded;
-            }
+            return new LaunchResult(false, $"'{computerName}' is not a valid host name, so {label} was not started.");
         }
 
-        return null;
+        IReadOnlyList<string> arguments;
+        try
+        {
+            arguments = CommandTemplate.Expand(argumentTemplate, computerName, Environment.UserName);
+        }
+        catch (FormatException ex)
+        {
+            return new LaunchResult(false, $"{label}: {ex.Message}");
+        }
+
+        var commandLine = WindowsCommandLine.Join(arguments);
+        var workingDirectory = WindowsPath.IsUnc(executable)
+            ? Environment.SystemDirectory
+            : Path.GetDirectoryName(executable) ?? Environment.SystemDirectory;
+
+        try
+        {
+            Start(executable, commandLine, workingDirectory, elevate: false);
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == ErrorElevationRequired)
+        {
+            try
+            {
+                Start(executable, commandLine, workingDirectory, elevate: true);
+            }
+            catch (Win32Exception inner)
+            {
+                AppLog.Warn($"Elevated launch of {label} failed.", inner);
+                return new LaunchResult(false, $"{label} needs administrator rights and was not started.");
+            }
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
+        {
+            AppLog.Warn($"Launching {label} ({executable}) failed.", ex);
+            return new LaunchResult(false, $"Could not start {label}: {ErrorTranslator.Describe(ex)}");
+        }
+
+        AppLog.Info($"Launched {label} for {computerName}.");
+        return new LaunchResult(true, $"Started {label} for {computerName}.");
     }
 
-    private static string ExpandTokens(string template, string computerName)
+    private static void Start(string executable, string arguments, string workingDirectory, bool elevate)
     {
-        return template
-            .Replace("{computerName}", computerName, StringComparison.OrdinalIgnoreCase)
-            .Replace("{userName}", Environment.UserName, StringComparison.OrdinalIgnoreCase);
+        var info = new ProcessStartInfo(executable, arguments)
+        {
+            UseShellExecute = elevate,
+            WorkingDirectory = workingDirectory
+        };
+        if (elevate)
+        {
+            info.Verb = "runas";
+        }
+
+        using var process = Process.Start(info);
     }
 }

@@ -1,8 +1,9 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using Toolbox.Models;
+using Toolbox.Diagnostics;
+using Toolbox.Launching;
+using Toolbox.Updates;
 
 namespace Toolbox.Services;
 
@@ -16,94 +17,100 @@ public sealed class LocalInstallService
     }
 
     public static string DefaultLocalInstallDirectory { get; } =
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Programs",
-            "Toolbox");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Toolbox");
 
-    public static string LocalExecutablePath =>
-        Path.Combine(DefaultLocalInstallDirectory, "Toolbox.exe");
-
-    public bool IsRunningFromLocalInstall =>
-        PathsEqual(NormalizePath(AppContext.BaseDirectory), NormalizePath(DefaultLocalInstallDirectory));
+    public static string LocalExecutablePath => Path.Combine(DefaultLocalInstallDirectory, ReleaseManifest.EntryExecutable);
 
     public bool ShouldOfferLocalInstall
     {
         get
         {
-
             if (!AppDeploymentKind.SupportsLocalInstallOffer)
             {
                 return false;
             }
 
-            if (IsRunningFromLocalInstall)
+            var running = UpdateService.InstallDirectory;
+            if (SamePath(running, DefaultLocalInstallDirectory))
             {
                 return false;
             }
 
-            var running = NormalizePath(AppContext.BaseDirectory);
-            if (running.StartsWith(@"\\", StringComparison.Ordinal))
+            if (WindowsPath.IsUnc(running))
             {
                 return true;
             }
 
-            var updateSource = NormalizePath(_settings.Current.Deployment.UpdateSourcePath);
-            return !string.IsNullOrWhiteSpace(updateSource) && PathsEqual(running, updateSource);
+            var source = _settings.Current.Deployment.UpdateSourcePath;
+            return !string.IsNullOrWhiteSpace(source) && SamePath(running, source);
         }
     }
 
-    public LocalInstallResult Install(
-        string? sourceDirectory = null,
-        bool createDesktopShortcut = true)
+    public async Task<LocalInstallResult> InstallAsync(IProgress<double>? progress, CancellationToken cancellationToken)
     {
-        var source = NormalizePath(string.IsNullOrWhiteSpace(sourceDirectory)
-            ? AppContext.BaseDirectory
-            : sourceDirectory);
+        var source = UpdateService.InstallDirectory;
+        var destination = DefaultLocalInstallDirectory;
 
-        var destination = NormalizePath(DefaultLocalInstallDirectory);
-
-        if (string.IsNullOrWhiteSpace(source) || !Directory.Exists(source))
+        if (UpdateService.OtherInstanceRunning(Path.TrimEndingDirectorySeparator(destination)))
         {
-            return LocalInstallResult.Fail($"Source folder not found: {source}");
-        }
-
-        if (PathsEqual(source, destination))
-        {
-            return LocalInstallResult.Fail("Toolbox is already running from the local install folder.");
+            return LocalInstallResult.Fail("Toolbox is already running from the local install folder. Close it and try again.");
         }
 
         try
         {
-            Directory.CreateDirectory(destination);
-            var exitCode = RunRobocopy(source, destination);
-
-            if (exitCode >= 8)
+            var release = await UpdateService.ReadVerifiedReleaseAsync(source, _settings.Current.Deployment, cancellationToken).ConfigureAwait(false);
+            if (UpdateApplier.IsInterrupted(destination))
             {
-                return LocalInstallResult.Fail($"Copy failed (robocopy exit {exitCode}).");
+                UpdateApplier.Apply(destination);
             }
 
-            if (!File.Exists(LocalExecutablePath))
+            await UpdateStager.StageAsync(source, destination, release.Manifest, progress, cancellationToken).ConfigureAwait(false);
+            var applied = UpdateApplier.Apply(destination);
+            if (!applied.Succeeded)
             {
-                return LocalInstallResult.Fail($"Toolbox.exe missing after copy to {destination}.");
+                return LocalInstallResult.Fail(applied.Message);
             }
 
-            EnsureUpdateSourcePath(destination, source);
-            string? shortcutPath = null;
-            if (createDesktopShortcut)
+            var updateSource = WindowsPath.IsUnc(source)
+                ? source
+                : string.IsNullOrWhiteSpace(_settings.Current.Deployment.UpdateSourcePath) ? source : _settings.Current.Deployment.UpdateSourcePath.Trim();
+            new InstallInfo
             {
-                shortcutPath = CreateDesktopShortcut(LocalExecutablePath, destination);
+                UpdateSourcePath = updateSource,
+                InstalledVersion = VersionParsing.ToDisplay(release.Manifest.ParsedVersion),
+                InstalledUtc = DateTimeOffset.UtcNow
+            }.Save(destination);
+
+            string? shortcut = null;
+            try
+            {
+                shortcut = CreateDesktopShortcut(LocalExecutablePath, destination);
+            }
+            catch (Exception ex) when (ex is COMException or InvalidOperationException or UnauthorizedAccessException)
+            {
+                AppLog.Warn("Desktop shortcut could not be created.", ex);
             }
 
-            return LocalInstallResult.Ok(destination, LocalExecutablePath, shortcutPath);
+            AppLog.Info($"Installed {release.Manifest.Version} to {destination} from {source} (signed={release.Signature.IsSigned}).");
+            return LocalInstallResult.Ok(destination, LocalExecutablePath, shortcut);
         }
-        catch (Exception ex)
+        catch (OperationCanceledException)
         {
+            return LocalInstallResult.Fail("Installation was cancelled.");
+        }
+        catch (Exception ex) when (ex is ManifestException or UpdateIntegrityException or InvalidOperationException)
+        {
+            AppLog.Error("Local install failed.", ex);
             return LocalInstallResult.Fail(ex.Message);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TimeoutException)
+        {
+            AppLog.Error("Local install failed.", ex);
+            return LocalInstallResult.Fail(ErrorTranslator.Describe(ex));
         }
     }
 
-    public bool TryLaunchLocalInstallAndExit(WindowCloser closeWindow)
+    public static bool TryLaunchLocalInstall()
     {
         if (!File.Exists(LocalExecutablePath))
         {
@@ -112,142 +119,67 @@ public sealed class LocalInstallService
 
         try
         {
-            Process.Start(new ProcessStartInfo
+            using var process = Process.Start(new ProcessStartInfo(LocalExecutablePath)
             {
-                FileName = LocalExecutablePath,
                 WorkingDirectory = DefaultLocalInstallDirectory,
-                UseShellExecute = true
+                UseShellExecute = false
             });
-            closeWindow();
             return true;
         }
-        catch
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
         {
+            AppLog.Warn("Could not start the local install.", ex);
             return false;
         }
     }
 
-    public delegate void WindowCloser();
-
-    private void EnsureUpdateSourcePath(string destination, string source)
-    {
-        var updateSource = source.StartsWith(@"\\", StringComparison.Ordinal)
-            ? source
-            : NormalizePath(_settings.Current.Deployment.UpdateSourcePath);
-
-        if (string.IsNullOrWhiteSpace(updateSource))
-        {
-            updateSource = source;
-        }
-
-        _settings.Current.Deployment.UpdateSourcePath = updateSource;
-        _settings.Current.Deployment.AutoUpdateOnClose = true;
-
-        var appsettingsPath = Path.Combine(destination, "appsettings.json");
-        TryPatchDeploymentSettings(appsettingsPath, updateSource, autoUpdateOnClose: true);
-    }
-
-    private static void TryPatchDeploymentSettings(string appsettingsPath, string updateSource, bool autoUpdateOnClose)
-    {
-        try
-        {
-            JsonNode root;
-            if (File.Exists(appsettingsPath))
-            {
-                root = JsonNode.Parse(File.ReadAllText(appsettingsPath)) ?? new JsonObject();
-            }
-            else
-            {
-                root = new JsonObject();
-            }
-
-            var deployment = root["deployment"] as JsonObject ?? new JsonObject();
-            deployment["updateSourcePath"] = updateSource;
-            deployment["autoUpdateOnClose"] = autoUpdateOnClose;
-            root["deployment"] = deployment;
-
-            var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(appsettingsPath, json);
-        }
-        catch
-        {
-
-        }
-    }
-
-    private static string? CreateDesktopShortcut(string exePath, string workingDirectory)
+    private static string CreateDesktopShortcut(string exePath, string workingDirectory)
     {
         var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         var shortcutPath = Path.Combine(desktop, "Toolbox.lnk");
-
         var iconPath = Path.Combine(workingDirectory, "Assets", "AppIcon.ico");
-        var iconLocation = File.Exists(iconPath) ? $"{iconPath},0" : $"{exePath},0";
 
-        var ps = $@"
-$s = New-Object -ComObject WScript.Shell
-$l = $s.CreateShortcut('{shortcutPath.Replace("'", "''")}')
-$l.TargetPath = '{exePath.Replace("'", "''")}'
-$l.WorkingDirectory = '{workingDirectory.Replace("'", "''")}'
-$l.Description = 'Toolbox'
-$l.IconLocation = '{iconLocation.Replace("'", "''")}'
-$l.Save()
-";
-        var psi = new ProcessStartInfo
+        var shellType = Type.GetTypeFromProgID("WScript.Shell")
+                        ?? throw new InvalidOperationException("Windows Script Host is not available.");
+        dynamic shell = Activator.CreateInstance(shellType)!;
+        try
         {
-            FileName = "powershell.exe",
-            Arguments = "-NoProfile -ExecutionPolicy Bypass -Command " + PsQuote(ps),
-            CreateNoWindow = true,
-            UseShellExecute = false
-        };
-        using var process = Process.Start(psi)
-            ?? throw new InvalidOperationException("Could not start PowerShell to create the shortcut.");
-        process.WaitForExit();
-        if (process.ExitCode != 0 || !File.Exists(shortcutPath))
+            dynamic link = shell.CreateShortcut(shortcutPath);
+            try
+            {
+                link.TargetPath = exePath;
+                link.WorkingDirectory = workingDirectory;
+                link.Description = "Toolbox";
+                link.IconLocation = (File.Exists(iconPath) ? iconPath : exePath) + ",0";
+                link.Save();
+            }
+            finally
+            {
+                Marshal.FinalReleaseComObject(link);
+            }
+        }
+        finally
         {
-            throw new InvalidOperationException("Desktop shortcut creation failed.");
+            Marshal.FinalReleaseComObject(shell);
         }
 
         return shortcutPath;
     }
 
-    private static string PsQuote(string script) =>
-        '"' + script.Replace("\"", "`\"") + '"';
-
-    private static int RunRobocopy(string source, string destination)
+    private static bool SamePath(string a, string b)
     {
-        var psi = new ProcessStartInfo
-        {
-            FileName = "robocopy.exe",
-            Arguments = $"\"{source}\" \"{destination}\" /E /XO /R:2 /W:1 /NFL /NDL /NJH /NJS /XD .git",
-            CreateNoWindow = true,
-            UseShellExecute = false
-        };
-
-        using var process = Process.Start(psi)
-            ?? throw new InvalidOperationException("Could not start robocopy.");
-        process.WaitForExit();
-        return process.ExitCode;
-    }
-
-    private static string NormalizePath(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return string.Empty;
-        }
-
         try
         {
-            return Path.GetFullPath(path.Trim().TrimEnd('\\', '/'));
+            return string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(a.Trim())),
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(b.Trim())),
+                StringComparison.OrdinalIgnoreCase);
         }
-        catch
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
-            return path.Trim().TrimEnd('\\', '/');
+            return false;
         }
     }
-
-    private static bool PathsEqual(string a, string b) =>
-        string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class LocalInstallResult
@@ -267,9 +199,5 @@ public sealed class LocalInstallResult
         ShortcutPath = shortcut
     };
 
-    public static LocalInstallResult Fail(string message) => new()
-    {
-        Succeeded = false,
-        Message = message
-    };
+    public static LocalInstallResult Fail(string message) => new() { Succeeded = false, Message = message };
 }

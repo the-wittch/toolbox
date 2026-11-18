@@ -11,6 +11,8 @@ public sealed class AppSettings
     public SearchSettings Search { get; set; } = new();
     public AccessControlSettings AccessControl { get; set; } = new();
     public PingSettings Ping { get; set; } = new();
+    public DetailSettings Details { get; set; } = new();
+    public LapsSettings Laps { get; set; } = new();
     public DeploymentSettings Deployment { get; set; } = new();
     public StreamingSettings Streaming { get; set; } = new();
     public List<RemoteToolDefinition> RemoteTools { get; set; } = new();
@@ -21,10 +23,15 @@ public sealed class AppSettings
 
 public sealed class DeploymentSettings
 {
-
     public string UpdateSourcePath { get; set; } = string.Empty;
 
     public bool AutoUpdateOnClose { get; set; } = true;
+
+    public List<string> TrustedSignerThumbprints { get; set; } = new();
+
+    public bool RequireSignedUpdates { get; set; }
+
+    public bool AllowDowngrade { get; set; }
 }
 
 public sealed class StreamingSettings
@@ -46,14 +53,29 @@ public sealed class StreamingEndpoint
     public string ViewStreamUrl { get; set; } = string.Empty;
     public string ControlAppUrl { get; set; } = string.Empty;
 
+    public StreamingEndpoint Clone() => new()
+    {
+        Id = Id,
+        Label = Label,
+        ComputerName = ComputerName,
+        ViewStreamUrl = ViewStreamUrl,
+        ControlAppUrl = ControlAppUrl
+    };
+
     public override string ToString() => string.IsNullOrWhiteSpace(Label) ? Id : Label;
 }
 
 public sealed class LdapSettings
 {
     public string RootOu { get; set; } = "OU=Computers,DC=example,DC=com";
+
+    public string Server { get; set; } = string.Empty;
+
+    public bool UseLdaps { get; set; }
+
     public int PageSize { get; set; } = 1000;
-    public List<string> PropertiesToLoad { get; set; } = new() { "cn", "description", "operatingSystem", "operatingSystemVersion" };
+    public int MaxResults { get; set; } = 500;
+    public int SearchTimeoutSeconds { get; set; } = 30;
     public string ComputerObjectFilter { get; set; } = "(objectCategory=computer)";
     public string NameAttribute { get; set; } = "cn";
     public string DescriptionAttribute { get; set; } = "description";
@@ -79,12 +101,35 @@ public sealed class AccessControlSettings
     public bool Enabled { get; set; }
     public List<string> AllowedGroups { get; set; } = new();
     public string DenyMessage { get; set; } = "Unable to open the program. You have insufficient privileges.";
+
+    public AccessControlSettings Clone() => new()
+    {
+        Enabled = Enabled,
+        AllowedGroups = new List<string>(AllowedGroups),
+        DenyMessage = DenyMessage
+    };
 }
 
 public sealed class PingSettings
 {
     public int TimeoutMs { get; set; } = 3000;
     public int BufferSize { get; set; } = 32;
+}
+
+public sealed class DetailSettings
+{
+    public int RemoteRegistryTimeoutSeconds { get; set; } = 15;
+}
+
+public sealed class LapsSettings
+{
+    public bool Enabled { get; set; } = true;
+
+    public int ClipboardClearSeconds { get; set; } = 30;
+
+    public int RevealSeconds { get; set; } = 20;
+
+    public int LookupTimeoutSeconds { get; set; } = 20;
 }
 
 public sealed class RemoteToolDefinition
@@ -113,7 +158,7 @@ public sealed class LabelSettings
     public string SearchButton { get; set; } = "Search";
     public string RemoteButton { get; set; } = "Remote in";
     public string ResultsEmpty { get; set; } = "No computers found. Try a different search.";
-    public string ResultsHint { get; set; } = "Double-click a row for OS info and ping results.";
+    public string ResultsHint { get; set; } = "Select a computer to load OS info and ping results.";
     public string HistoryHeader { get; set; } = "Recent searches";
     public string StatusReady { get; set; } = "Ready";
     public string LoadingDetail { get; set; } = "Loading details…";
@@ -139,15 +184,22 @@ public sealed class ComputerItem
     public string Description { get; set; } = string.Empty;
     public string? OperatingSystem { get; set; }
     public string? OperatingSystemVersion { get; set; }
+    public string DistinguishedName { get; set; } = string.Empty;
+    public string? DnsHostName { get; set; }
+    public DateTimeOffset? LastLogon { get; set; }
+
+    public bool HasValidHostName { get; set; }
+
+    public string OperatingSystemDisplay =>
+        string.IsNullOrWhiteSpace(OperatingSystem) ? string.Empty : OperatingSystem!;
 }
 
 public sealed class ComputerDetail
 {
     public string ComputerName { get; set; } = string.Empty;
-    public string OperatingSystem { get; set; } = "Not found";
-    public string OperatingSystemVersion { get; set; } = "Not found";
-    public string LastLoggedOnUser { get; set; } = "Not found";
-    public string LapsPassword { get; set; } = "N/A";
+    public string OperatingSystem { get; set; } = "Not available";
+    public string OperatingSystemVersion { get; set; } = "Not available";
+    public string LastLoggedOnUser { get; set; } = "Not available";
     public PingResult Ping { get; set; } = new();
 }
 

@@ -1,5 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Toolbox.Configuration;
+using Toolbox.Diagnostics;
 using Toolbox.Services;
 
 namespace Toolbox.Views;
@@ -12,31 +14,19 @@ public sealed partial class FirstRunDialog : ContentDialog
         var settings = App.Settings.Current;
 
         ProgramTitleBox.Text = settings.ProgramTitle;
-        ProgramTitleBox.PlaceholderText = string.IsNullOrWhiteSpace(settings.ProgramTitle)
-            ? "Toolbox"
-            : settings.ProgramTitle;
-
         var rootOu = settings.Ldap.RootOu?.Trim() ?? string.Empty;
-        RootOuBox.PlaceholderText = string.IsNullOrWhiteSpace(rootOu)
-            ? "OU=Computers,DC=contoso,DC=com"
-            : rootOu;
+        RootOuBox.PlaceholderText = "OU=Computers,DC=contoso,DC=com";
+        RootOuBox.Text = PresetQuery.LooksLikePlaceholderOu(rootOu) ? string.Empty : rootOu;
+        PrefixesBox.Text = string.Join(", ", settings.Search.ComputerNamePrefixes);
 
-        RootOuBox.Text = SettingsService.LooksLikePlaceholderOu(rootOu) ? string.Empty : rootOu;
-
-        var prefixes = string.Join(", ", settings.Search.ComputerNamePrefixes);
-        PrefixesBox.Text = prefixes;
-        PrefixesBox.PlaceholderText = string.IsNullOrWhiteSpace(prefixes) ? "PC-, WS-" : prefixes;
-
-        var updateSource = UpdateService.SuggestUpdateSourcePath(settings.Deployment);
-        UpdateSourceBox.Text = updateSource;
-        UpdateSourceBox.PlaceholderText = string.IsNullOrWhiteSpace(updateSource)
-            ? @"\\fileserver\apps\Toolbox"
-            : updateSource;
+        UpdateSourceBox.Text = settings.Deployment.UpdateSourcePath;
         AutoUpdateToggle.IsOn = settings.Deployment.AutoUpdateOnClose;
+        var policyManaged = !string.IsNullOrWhiteSpace(App.Settings.Policy.UpdateSourcePath);
+        UpdateSourceBox.IsEnabled = !policyManaged;
+        AutoUpdateToggle.IsEnabled = App.Settings.Policy.AutoUpdate is null;
 
         PathHint.Text =
-            $"Install defaults:\n{App.Settings.AdjacentSettingsPath}\n\n" +
-            $"Will save your copy to:\n{App.Settings.UserSettingsPath}";
+            $"Install defaults:\n{App.Settings.InstallSettingsPath}\n\nYour settings:\n{App.Settings.UserSettingsPath}";
 
         foreach (var (id, label) in App.Theme.GetThemeChoices())
         {
@@ -44,8 +34,7 @@ public sealed partial class FirstRunDialog : ContentDialog
         }
 
         var current = ThemeService.Normalize(settings.Theme);
-        ThemeBox.SelectedItem = ThemeBox.Items
-            .OfType<ComboBoxItem>()
+        ThemeBox.SelectedItem = ThemeBox.Items.OfType<ComboBoxItem>()
             .FirstOrDefault(i => string.Equals(i.Tag?.ToString(), current, StringComparison.OrdinalIgnoreCase))
             ?? ThemeBox.Items.OfType<ComboBoxItem>().FirstOrDefault();
     }
@@ -55,53 +44,44 @@ public sealed partial class FirstRunDialog : ContentDialog
         ErrorText.Visibility = Visibility.Collapsed;
 
         var rootOu = RootOuBox.Text?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(rootOu) || SettingsService.LooksLikePlaceholderOu(rootOu))
+        if (rootOu.Length == 0 || PresetQuery.LooksLikePlaceholderOu(rootOu))
         {
-            args.Cancel = true;
-            ErrorText.Text = "Enter your real LDAP root OU (not the example.com placeholder).";
-            ErrorText.Visibility = Visibility.Visible;
+            ShowError(args, "Enter your LDAP root OU (not the example.com placeholder).");
             return;
         }
 
-        var settings = App.Settings.Current;
-        settings.ProgramTitle = string.IsNullOrWhiteSpace(ProgramTitleBox.Text)
-            ? "Toolbox"
-            : ProgramTitleBox.Text.Trim();
+        var settings = SettingsJson.Clone(App.Settings.Current);
+        settings.ProgramTitle = string.IsNullOrWhiteSpace(ProgramTitleBox.Text) ? "Toolbox" : ProgramTitleBox.Text.Trim();
         settings.Ldap.RootOu = rootOu;
-        settings.Search.ComputerNamePrefixes = SplitCsv(PrefixesBox.Text);
+        settings.Search.ComputerNamePrefixes = DialogText.SplitList(PrefixesBox.Text);
         settings.Deployment.UpdateSourcePath = UpdateSourceBox.Text?.Trim() ?? string.Empty;
         settings.Deployment.AutoUpdateOnClose = AutoUpdateToggle.IsOn;
-
         if (ThemeBox.SelectedItem is ComboBoxItem { Tag: string themeId })
         {
             settings.Theme = ThemeService.Normalize(themeId);
         }
 
+        var errors = DialogText.ErrorsFor(settings, "ldap.rootOu", "deployment.updateSourcePath");
+        if (errors.Count > 0)
+        {
+            ShowError(args, DialogText.Describe(errors));
+            return;
+        }
+
         try
         {
-            App.Settings.SaveUserSettings(settings);
-            PathHint.Text = $"Saved to:\n{App.Settings.ActiveSettingsPath}";
+            App.Settings.SaveUserSettings(settings, markSetupComplete: true);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            args.Cancel = true;
-            ErrorText.Text = $"Could not save settings: {ex.Message}";
-            ErrorText.Visibility = Visibility.Visible;
+            ShowError(args, "Could not save settings: " + ErrorTranslator.Describe(ex));
         }
     }
 
-    private static List<string> SplitCsv(string? text)
+    private void ShowError(ContentDialogButtonClickEventArgs args, string message)
     {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return new List<string>();
-        }
-
-        return text
-            .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
-            .Select(s => s.Trim())
-            .Where(s => s.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        args.Cancel = true;
+        ErrorText.Text = message;
+        ErrorText.Visibility = Visibility.Visible;
     }
 }

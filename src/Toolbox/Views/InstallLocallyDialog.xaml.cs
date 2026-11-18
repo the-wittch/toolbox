@@ -6,21 +6,26 @@ namespace Toolbox.Views;
 
 public sealed partial class InstallLocallyDialog : ContentDialog
 {
-    public LocalInstallResult? InstallResult { get; private set; }
-
     public InstallLocallyDialog()
     {
         InitializeComponent();
         DestinationText.Text = LocalInstallService.DefaultLocalInstallDirectory;
     }
 
-    private void ContentDialog_PrimaryButtonClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
+    public LocalInstallResult? InstallResult { get; private set; }
+
+    private async void ContentDialog_PrimaryButtonClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
     {
-        ErrorText.Visibility = Visibility.Collapsed;
         var deferral = args.GetDeferral();
+        ErrorText.Visibility = Visibility.Collapsed;
+        IsPrimaryButtonEnabled = IsSecondaryButtonEnabled = false;
+        InstallProgress.Value = 0;
+        InstallProgress.Visibility = Visibility.Visible;
+
         try
         {
-            InstallResult = App.LocalInstall.Install(createDesktopShortcut: true);
+            var progress = new Progress<double>(value => InstallProgress.Value = value);
+            InstallResult = await App.LocalInstall.InstallAsync(progress, CancellationToken.None);
             if (!InstallResult.Succeeded)
             {
                 args.Cancel = true;
@@ -30,6 +35,8 @@ public sealed partial class InstallLocallyDialog : ContentDialog
         }
         finally
         {
+            InstallProgress.Visibility = Visibility.Collapsed;
+            IsPrimaryButtonEnabled = IsSecondaryButtonEnabled = true;
             deferral.Complete();
         }
     }

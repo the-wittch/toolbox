@@ -11,17 +11,25 @@
 
     <StackPanel Spacing="12" Width="480">
         <TextBlock TextWrapping="Wrap">
-            Toolbox is running from a network location. For best performance and auto-update,
-            install a personal copy on this PC:
+            Toolbox is running from a network folder. Install a copy for your account to start
+            faster and get updates automatically:
         </TextBlock>
 
-        <TextBlock x:Name="DestinationText" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" />
+        <TextBlock x:Name="DestinationText"
+                   FontFamily="{StaticResource ToolboxMonoFont}"
+                   FontSize="12"
+                   TextWrapping="Wrap"
+                   IsTextSelectionEnabled="True" />
 
         <TextBlock TextWrapping="Wrap" Opacity="0.75" FontSize="12">
-            This copies files to your profile, creates a Desktop shortcut, and opens the local copy.
-            Your site settings are saved under Local AppData. Closing the local app can pull newer
-            files from the network install folder.
+            Files are checked against the release manifest while they are copied. A desktop shortcut
+            is created and the installed copy opens when it is done. No administrator rights are needed.
         </TextBlock>
+
+        <ProgressBar x:Name="InstallProgress"
+                     Maximum="1"
+                     Visibility="Collapsed"
+                     AutomationProperties.Name="Installation progress" />
 
         <TextBlock x:Name="ErrorText"
                    Foreground="{ThemeResource ToolboxErrorBrush}"
