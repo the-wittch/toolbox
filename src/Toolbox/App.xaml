@@ -6,7 +6,6 @@
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
 
@@ -48,10 +47,9 @@
 
             <SolidColorBrush x:Key="ToolboxAccentBrush" Color="#FF2F6F7E" />
             <SolidColorBrush x:Key="ToolboxAccentDarkBrush" Color="#FF1F4F5A" />
+            <FontFamily x:Key="ToolboxMonoFont">Cascadia Mono, Consolas, Courier New</FontFamily>
 
-            <Style x:Key="ToolboxAccentButtonStyle" TargetType="Button">
-                <Setter Property="Background" Value="{StaticResource ToolboxAccentBrush}" />
-                <Setter Property="Foreground" Value="White" />
+            <Style x:Key="ToolboxAccentButtonStyle" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
                 <Setter Property="Padding" Value="12,6" />
             </Style>
 

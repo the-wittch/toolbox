@@ -11,10 +11,15 @@
 
     <ScrollViewer MaxHeight="560" VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="12" Width="460" Padding="0,4,12,0">
-            <TextBlock Text="Changes save to your per-user appsettings.json under Local AppData (overrides the install/share copy on next launch)."
+            <TextBlock Text="Changes are saved in your own profile and only override the values you change here."
                        TextWrapping="WrapWholeWords"
                        Opacity="0.75"
                        FontSize="12" />
+
+            <TextBlock x:Name="ErrorText"
+                       Foreground="{ThemeResource ToolboxErrorBrush}"
+                       TextWrapping="WrapWholeWords"
+                       Visibility="Collapsed" />
 
             <TextBox x:Name="ProgramTitleBox" Header="Program title" />
             <TextBox x:Name="RootOuBox" Header="LDAP root OU" TextWrapping="Wrap" AcceptsReturn="False" />
@@ -31,19 +36,18 @@
                        SmallChange="500"
                        SpinButtonPlacementMode="Inline" />
 
-            <ToggleSwitch x:Name="AccessControlToggle" Header="Require AD group membership" OffContent="Off" OnContent="On" />
-            <TextBox x:Name="AllowedGroupsBox"
-                     Header="Allowed groups (comma-separated)"
-                     TextWrapping="Wrap"
-                     AcceptsReturn="True"
-                     Height="72" />
+            <TextBlock Text="Access control" FontWeight="SemiBold" />
+            <TextBlock x:Name="AccessControlText"
+                       TextWrapping="WrapWholeWords"
+                       Opacity="0.75"
+                       FontSize="12" />
 
             <TextBox x:Name="UpdateSourceBox"
-                     Header="Install / update source path"
+                     Header="Update source folder"
                      PlaceholderText="\\server\apps\Toolbox"
                      TextWrapping="Wrap" />
             <ToggleSwitch x:Name="AutoUpdateToggle"
-                          Header="Auto-update on close"
+                          Header="Install verified updates when Toolbox closes"
                           OffContent="Off"
                           OnContent="On" />
 
@@ -62,7 +66,7 @@
             <TextBox x:Name="StreamingConnectToolBox"
                      Header="Connect remote tool id"
                      PlaceholderText="sccm" />
-            <TextBox x:Name="StreamingPasswordUrlBox"
+            <TextBox x:Name="StreamingAccountUrlBox"
                      Header="Change password URL"
                      TextWrapping="Wrap" />
 
@@ -85,16 +89,16 @@
 
             <TextBlock Text="Reset"
                        FontWeight="SemiBold" />
-            <TextBlock Text="Replace your Local AppData settings with the install/share appsettings.json (adds missing sections like streaming)."
+            <TextBlock Text="Discard your personal changes and use the install defaults again. Your current file is kept as appsettings.json.bak."
                        TextWrapping="WrapWholeWords"
                        Opacity="0.75"
                        FontSize="12" />
             <Button x:Name="RestoreDefaultsButton"
-                    Content="Restore install defaults"
+                    Content="Reset to install defaults"
                     HorizontalAlignment="Stretch"
                     Click="RestoreDefaultsButton_Click" />
 
-            <TextBlock x:Name="PathHint" FontSize="11" Opacity="0.65" TextWrapping="WrapWholeWords" />
+            <TextBlock x:Name="PathHint" FontSize="11" Opacity="0.65" TextWrapping="WrapWholeWords" IsTextSelectionEnabled="True" />
         </StackPanel>
     </ScrollViewer>
 </ContentDialog>

@@ -40,7 +40,7 @@ project.lock.json
 project.fragment.lock.json
 artifacts/
 
-# Windows App SDK / MSIX leftovers (this project is unpackaged)
+# Windows App SDK / MSIX output
 AppPackages/
 BundleArtifacts/
 Package.StoreAssociation.xml
@@ -59,6 +59,7 @@ Package.StoreAssociation.xml
 secrets.json
 **/appsettings.*.local.json
 *.pfx
+*.log
 
 # OS junk
 Thumbs.db

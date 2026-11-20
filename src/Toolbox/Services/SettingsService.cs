@@ -1,370 +1,124 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using Microsoft.Win32;
+using Toolbox.Configuration;
+using Toolbox.Diagnostics;
 using Toolbox.Models;
 
 namespace Toolbox.Services;
 
 public sealed class SettingsService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = true,
-        ReadCommentHandling = JsonCommentHandling.Skip,
-        AllowTrailingCommas = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
-
-    private readonly string _adjacentSettingsPath;
-    private readonly string _fallbackSettingsPath;
-    private string _writableSettingsPath;
-
-    public AppSettings Current { get; private set; } = new();
-
-    public string AdjacentSettingsPath => _adjacentSettingsPath;
-
-    public string UserSettingsPath => _fallbackSettingsPath;
-
-    public string ActiveSettingsPath => _writableSettingsPath;
-
-    public bool NeedsFirstRunSetup => !Current.SetupCompleted;
+    private readonly SettingsStore _store;
+    private AppSettings _beforePolicy = new();
 
     public SettingsService()
     {
-        _adjacentSettingsPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var folder = Path.Combine(appData, "Toolbox");
-        Directory.CreateDirectory(folder);
-        _fallbackSettingsPath = Path.Combine(folder, "appsettings.json");
-        _writableSettingsPath = _adjacentSettingsPath;
+        InstallSettingsPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+        UserSettingsPath = Path.Combine(AppDataFolder, "appsettings.json");
+        _store = new SettingsStore(InstallSettingsPath, UserSettingsPath);
     }
 
-    public AppSettings Load()
+    public static string AppDataFolder { get; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Toolbox");
+
+    public string InstallSettingsPath { get; }
+
+    public string UserSettingsPath { get; }
+
+    public AppSettings Current { get; private set; } = new();
+
+    public MachinePolicy Policy { get; private set; } = new();
+
+    public IReadOnlyList<string> LoadWarnings { get; private set; } = Array.Empty<string>();
+
+    public IReadOnlyList<ValidationIssue> Issues { get; private set; } = Array.Empty<ValidationIssue>();
+
+    public bool NeedsFirstRunSetup => !Current.SetupCompleted;
+
+    public void Load()
     {
-        AppSettings baseline;
-
-        if (File.Exists(_adjacentSettingsPath))
-        {
-            baseline = LoadFromFile(_adjacentSettingsPath) ?? new AppSettings();
-        }
-        else
-        {
-            baseline = new AppSettings();
-            TryWrite(_adjacentSettingsPath, baseline);
-        }
-
-        AppSettings settings = baseline;
-
-        if (File.Exists(_fallbackSettingsPath) &&
-            !PathsEqual(_fallbackSettingsPath, _adjacentSettingsPath))
-        {
-            var overlay = LoadFromFile(_fallbackSettingsPath);
-            if (overlay is not null)
-            {
-                settings = Merge(baseline, overlay);
-            }
-        }
-
-        if (FillMissingFromBaseline(settings, baseline) &&
-            File.Exists(_fallbackSettingsPath) &&
-            !PathsEqual(_fallbackSettingsPath, _adjacentSettingsPath))
-        {
-            TryWrite(_fallbackSettingsPath, settings);
-        }
-
-        Current = settings;
-        return Current;
+        var result = _store.Load();
+        Policy = ReadPolicy();
+        _beforePolicy = SettingsJson.Clone(result.Settings);
+        Policy.ApplyTo(result.Settings);
+        Current = result.Settings;
+        LoadWarnings = result.Warnings;
+        Issues = SettingsValidator.Validate(Current);
     }
 
-    public void Save(AppSettings settings)
+    public void SaveUserSettings(AppSettings settings, bool markSetupComplete)
     {
-        Current = settings;
-        if (TryWrite(_adjacentSettingsPath, settings))
+        var toSave = SettingsJson.Clone(settings);
+        if (markSetupComplete)
         {
-            _writableSettingsPath = _adjacentSettingsPath;
-
-            SyncUserOverlayIfPresent(settings);
-            return;
+            toSave.SetupCompleted = true;
         }
 
-        if (TryWrite(_fallbackSettingsPath, settings))
+        // keep policy-enforced values out of the user's file
+        if (!string.IsNullOrWhiteSpace(Policy.UpdateSourcePath))
         {
-            _writableSettingsPath = _fallbackSettingsPath;
-            return;
+            toSave.Deployment.UpdateSourcePath = _beforePolicy.Deployment.UpdateSourcePath;
         }
 
-        throw new IOException(
-            $"Could not write settings to '{_adjacentSettingsPath}' or '{_fallbackSettingsPath}'.");
+        if (Policy.AutoUpdate is not null)
+        {
+            toSave.Deployment.AutoUpdateOnClose = _beforePolicy.Deployment.AutoUpdateOnClose;
+        }
+
+        _store.SaveUser(toSave);
+        AppLog.Info($"Personal settings saved to {UserSettingsPath}.");
+        ReloadAfterSave();
     }
 
-    public void SaveCurrent() => Save(Current);
-
-    public void SaveUserSettings(AppSettings settings)
+    public void ResetUserSettings()
     {
-        settings.SetupCompleted = true;
-        Current = settings;
-        if (TryWrite(_fallbackSettingsPath, settings))
-        {
-            _writableSettingsPath = _fallbackSettingsPath;
-            return;
-        }
-
-        Save(settings);
+        _store.ResetUser();
+        AppLog.Info("Personal settings reset to install defaults.");
+        ReloadAfterSave();
     }
 
-    private void SyncUserOverlayIfPresent(AppSettings settings)
-    {
-        if (!File.Exists(_fallbackSettingsPath) ||
-            PathsEqual(_fallbackSettingsPath, _adjacentSettingsPath))
-        {
-            return;
-        }
-
-        TryWrite(_fallbackSettingsPath, settings);
-    }
-
-    public bool RestoreFromInstallDefaults()
-    {
-        var install = LoadFromFile(_adjacentSettingsPath);
-        if (install is null)
-        {
-            return false;
-        }
-
-        install.SetupCompleted = true;
-        install.Streaming ??= new StreamingSettings();
-        install.Streaming.Endpoints ??= new List<StreamingEndpoint>();
-
-        Current = install;
-        if (TryWrite(_fallbackSettingsPath, Current))
-        {
-            _writableSettingsPath = _fallbackSettingsPath;
-            return true;
-        }
-
-        if (TryWrite(_adjacentSettingsPath, Current))
-        {
-            _writableSettingsPath = _adjacentSettingsPath;
-            return true;
-        }
-
-        return false;
-    }
-
-    public void ResetToDefaults()
-    {
-        _ = RestoreFromInstallDefaults();
-    }
-
-    public static bool LooksLikePlaceholderOu(string? rootOu)
-    {
-        if (string.IsNullOrWhiteSpace(rootOu))
-        {
-            return true;
-        }
-
-        return rootOu.Contains("DC=example", StringComparison.OrdinalIgnoreCase)
-               || rootOu.Contains("example.com", StringComparison.OrdinalIgnoreCase);
-    }
-
-    public static string ResolvePresetQuery(string queryText)
-    {
-        if (string.IsNullOrEmpty(queryText))
-        {
-            return queryText;
-        }
-
-        const string todayPrefix = "{today:";
-        if (queryText.StartsWith(todayPrefix, StringComparison.OrdinalIgnoreCase) &&
-            queryText.EndsWith('}'))
-        {
-            var format = queryText[todayPrefix.Length..^1];
-            if (string.IsNullOrWhiteSpace(format))
-            {
-                format = "M/d/yyyy";
-            }
-
-            return DateTime.Now.ToString(format);
-        }
-
-        return queryText;
-    }
-
-    private static bool PathsEqual(string a, string b) =>
-        string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
-
-    private static bool TryWrite(string path, AppSettings settings)
+    private void ReloadAfterSave()
     {
         try
         {
-            var directory = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            var json = JsonSerializer.Serialize(settings, JsonOptions);
-            var temp = path + ".tmp";
-            File.WriteAllText(temp, json);
-            File.Copy(temp, path, overwrite: true);
-            File.Delete(temp);
-            return true;
+            Load();
         }
-        catch
+        catch (SettingsLoadException ex)
         {
-            return false;
+            AppLog.Error("Install settings became unreadable; keeping the settings already loaded.", ex);
         }
     }
 
-    private static AppSettings? LoadFromFile(string path)
+    private static MachinePolicy ReadPolicy()
     {
-        if (!File.Exists(path))
+        try
         {
-            return null;
+            using var key = Registry.LocalMachine.OpenSubKey(MachinePolicy.RegistryKeyPath);
+            if (key is null)
+            {
+                return new MachinePolicy();
+            }
+
+            return new MachinePolicy
+            {
+                AllowedGroups = ReadList(key, "AllowedGroups"),
+                DenyMessage = key.GetValue("DenyMessage") as string,
+                UpdateSourcePath = key.GetValue("UpdateSourcePath") as string,
+                AutoUpdate = key.GetValue("AutoUpdate") is int flag ? flag != 0 : null,
+                TrustedUpdateSigners = ReadList(key, "TrustedUpdateSigners")
+            };
         }
-
-        var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
-    }
-
-    private static AppSettings Merge(AppSettings baseline, AppSettings overlay)
-    {
-        var baselineJson = JsonSerializer.SerializeToElement(baseline, JsonOptions);
-        var overlayJson = JsonSerializer.SerializeToElement(overlay, JsonOptions);
-        using var stream = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
         {
-            MergeElements(writer, baselineJson, overlayJson);
-        }
-
-        stream.Position = 0;
-        return JsonSerializer.Deserialize<AppSettings>(stream, JsonOptions) ?? baseline;
-    }
-
-    private static void MergeElements(Utf8JsonWriter writer, JsonElement baseline, JsonElement overlay)
-    {
-        if (overlay.ValueKind == JsonValueKind.Object && baseline.ValueKind == JsonValueKind.Object)
-        {
-            writer.WriteStartObject();
-            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var prop in baseline.EnumerateObject())
-            {
-                names.Add(prop.Name);
-            }
-
-            foreach (var prop in overlay.EnumerateObject())
-            {
-                names.Add(prop.Name);
-            }
-
-            foreach (var name in names)
-            {
-                writer.WritePropertyName(name);
-                var hasBase = baseline.TryGetProperty(name, out var baseProp);
-                var hasOver = overlay.TryGetProperty(name, out var overProp);
-
-                if (hasBase && hasOver)
-                {
-                    if (overProp.ValueKind is JsonValueKind.Object && baseProp.ValueKind is JsonValueKind.Object)
-                    {
-                        MergeElements(writer, baseProp, overProp);
-                    }
-                    else if (IsEmptyOverlayValue(overProp) && !IsEmptyOverlayValue(baseProp))
-                    {
-
-                        baseProp.WriteTo(writer);
-                    }
-                    else
-                    {
-                        overProp.WriteTo(writer);
-                    }
-                }
-                else if (hasOver)
-                {
-                    overProp.WriteTo(writer);
-                }
-                else
-                {
-                    baseProp.WriteTo(writer);
-                }
-            }
-
-            writer.WriteEndObject();
-            return;
-        }
-
-        if (overlay.ValueKind != JsonValueKind.Undefined && overlay.ValueKind != JsonValueKind.Null)
-        {
-            if (IsEmptyOverlayValue(overlay) && !IsEmptyOverlayValue(baseline))
-            {
-                baseline.WriteTo(writer);
-            }
-            else
-            {
-                overlay.WriteTo(writer);
-            }
-        }
-        else
-        {
-            baseline.WriteTo(writer);
+            AppLog.Error("Machine policy could not be read.", ex);
+            return new MachinePolicy { ReadError = ex.Message };
         }
     }
 
-    private static bool IsEmptyOverlayValue(JsonElement value) =>
-        value.ValueKind switch
-        {
-            JsonValueKind.Null => true,
-            JsonValueKind.String => string.IsNullOrWhiteSpace(value.GetString()),
-            JsonValueKind.Array => value.GetArrayLength() == 0,
-            _ => false
-        };
-
-    private static bool FillMissingFromBaseline(AppSettings settings, AppSettings baseline)
+    private static IReadOnlyList<string>? ReadList(RegistryKey key, string name) => key.GetValue(name) switch
     {
-        var changed = false;
-
-        var streaming = settings.Streaming ??= new StreamingSettings();
-        var baselineStreaming = baseline.Streaming ??= new StreamingSettings();
-        streaming.Endpoints ??= new List<StreamingEndpoint>();
-        baselineStreaming.Endpoints ??= new List<StreamingEndpoint>();
-
-        if (streaming.Endpoints.Count == 0 && baselineStreaming.Endpoints.Count > 0)
-        {
-            streaming.Endpoints = baselineStreaming.Endpoints
-                .Select(CloneEndpoint)
-                .ToList();
-            changed = true;
-        }
-
-        if (string.IsNullOrWhiteSpace(streaming.ChangePasswordUrl) &&
-            !string.IsNullOrWhiteSpace(baselineStreaming.ChangePasswordUrl))
-        {
-            streaming.ChangePasswordUrl = baselineStreaming.ChangePasswordUrl;
-            changed = true;
-        }
-
-        if (string.IsNullOrWhiteSpace(streaming.ConnectRemoteToolId) &&
-            !string.IsNullOrWhiteSpace(baselineStreaming.ConnectRemoteToolId))
-        {
-            streaming.ConnectRemoteToolId = baselineStreaming.ConnectRemoteToolId;
-            changed = true;
-        }
-
-        if (changed && streaming.Endpoints.Count > 0 && !streaming.Enabled)
-        {
-            streaming.Enabled = baselineStreaming.Enabled;
-        }
-
-        return changed;
-    }
-
-    private static StreamingEndpoint CloneEndpoint(StreamingEndpoint source) => new()
-    {
-        Id = source.Id,
-        Label = source.Label,
-        ComputerName = source.ComputerName,
-        ViewStreamUrl = source.ViewStreamUrl,
-        ControlAppUrl = source.ControlAppUrl
+        string[] values => values,
+        string value => value.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+        _ => null
     };
 }

@@ -11,13 +11,12 @@
     <ScrollViewer MaxHeight="520" VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="12" Width="480" Padding="0,4,12,0">
             <TextBlock TextWrapping="WrapWholeWords" Opacity="0.82">
-                Defaults below come from the install appsettings.json (edit that file on the share
-                to pre-fill hints for staff). Change anything for your site, then continue.
-                Your choices save under Local AppData so the shared folder is not overwritten.
+                The values below come from the appsettings.json your administrator installed.
+                Adjust them for your site if needed. Your choices are saved in your own profile,
+                so the shared copy is never changed.
             </TextBlock>
 
-            <TextBox x:Name="ProgramTitleBox"
-                     Header="Program title" />
+            <TextBox x:Name="ProgramTitleBox" Header="Program title" />
 
             <TextBox x:Name="RootOuBox"
                      Header="LDAP root OU (required)"
@@ -25,27 +24,26 @@
                      AcceptsReturn="False" />
 
             <TextBox x:Name="PrefixesBox"
-                     Header="Computer-name prefixes (comma-separated)" />
+                     Header="Computer-name prefixes (comma-separated)"
+                     PlaceholderText="PC-, WS-" />
 
-            <ComboBox x:Name="ThemeBox"
-                      Header="Theme"
-                      HorizontalAlignment="Stretch" />
+            <ComboBox x:Name="ThemeBox" Header="Theme" HorizontalAlignment="Stretch" />
 
             <TextBox x:Name="UpdateSourceBox"
-                     Header="Install / update source path"
+                     Header="Update source folder"
                      PlaceholderText="\\fileserver\apps\Toolbox"
                      TextWrapping="Wrap"
                      AcceptsReturn="False" />
 
             <ToggleSwitch x:Name="AutoUpdateToggle"
-                          Header="Auto-update from that path when Toolbox closes"
+                          Header="Install verified updates when Toolbox closes"
                           OffContent="Off"
                           OnContent="On" />
 
             <TextBlock TextWrapping="WrapWholeWords" FontSize="12" Opacity="0.7">
-                Preferred install location: %LOCALAPPDATA%\Programs\Toolbox (use Install-Toolbox.ps1
-                on the share, or the in-app install prompt). On close, newer files sync from the
-                source path above. Per-user OU/theme stay in Local AppData.
+                Updates only apply to copies installed with Install-Toolbox.ps1 or the in-app
+                installer (in %LOCALAPPDATA%\Programs\Toolbox). Every update is checked against the
+                release manifest before anything is replaced.
             </TextBlock>
 
             <TextBlock x:Name="ErrorText"
@@ -56,7 +54,8 @@
             <TextBlock x:Name="PathHint"
                        FontSize="11"
                        Opacity="0.65"
-                       TextWrapping="WrapWholeWords" />
+                       TextWrapping="WrapWholeWords"
+                       IsTextSelectionEnabled="True" />
         </StackPanel>
     </ScrollViewer>
 </ContentDialog>

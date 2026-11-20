@@ -1,5 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Toolbox.Configuration;
+using Toolbox.Diagnostics;
 using Toolbox.Models;
 using Toolbox.Services;
 
@@ -7,9 +9,6 @@ namespace Toolbox.Views;
 
 public sealed partial class SettingsDialog : ContentDialog
 {
-
-    public bool DefaultsRestored { get; private set; }
-
     private readonly List<StreamingEndpoint> _streamingEndpoints = new();
     private bool _suppressEndpointSelection;
     private bool _suppressEndpointEdit;
@@ -20,39 +19,41 @@ public sealed partial class SettingsDialog : ContentDialog
         LoadFieldsFromSettings();
     }
 
+    public bool DefaultsRestored { get; private set; }
+
     private void LoadFieldsFromSettings()
     {
         var settings = App.Settings.Current;
-        settings.Streaming ??= new StreamingSettings();
-        settings.Streaming.Endpoints ??= new List<StreamingEndpoint>();
 
         ProgramTitleBox.Text = settings.ProgramTitle;
         RootOuBox.Text = settings.Ldap.RootOu;
         PrefixesBox.Text = string.Join(", ", settings.Search.ComputerNamePrefixes);
         PingTimeoutBox.Value = settings.Ping.TimeoutMs;
-        AccessControlToggle.IsOn = settings.AccessControl.Enabled;
-        AllowedGroupsBox.Text = string.Join(", ", settings.AccessControl.AllowedGroups);
-        UpdateSourceBox.Text = UpdateService.SuggestUpdateSourcePath(settings.Deployment);
+
+        var access = settings.AccessControl;
+        AccessControlText.Text = access.Enabled
+            ? $"Only members of {string.Join(", ", access.AllowedGroups)} can open Toolbox. Managed by your administrator."
+            : "Anyone can open Toolbox. Your administrator can restrict it in the install settings or by group policy.";
+
+        UpdateSourceBox.Text = settings.Deployment.UpdateSourcePath;
         AutoUpdateToggle.IsOn = settings.Deployment.AutoUpdateOnClose;
+        UpdateSourceBox.IsEnabled = string.IsNullOrWhiteSpace(App.Settings.Policy.UpdateSourcePath);
+        AutoUpdateToggle.IsEnabled = App.Settings.Policy.AutoUpdate is null;
 
         StreamingEnabledToggle.IsOn = settings.Streaming.Enabled;
         StreamingConnectToolBox.Text = string.IsNullOrWhiteSpace(settings.Streaming.ConnectRemoteToolId)
             ? "sccm"
             : settings.Streaming.ConnectRemoteToolId;
-        StreamingPasswordUrlBox.Text = settings.Streaming.ChangePasswordUrl;
+        StreamingAccountUrlBox.Text = settings.Streaming.AccountPageUrl;
 
         _streamingEndpoints.Clear();
-        foreach (var endpoint in settings.Streaming.Endpoints)
-        {
-            _streamingEndpoints.Add(CloneEndpoint(endpoint));
-        }
-
-        RefreshStreamingEndpointsList(selectIndex: _streamingEndpoints.Count > 0 ? 0 : -1);
+        _streamingEndpoints.AddRange(settings.Streaming.Endpoints.Select(e => e.Clone()));
+        RefreshStreamingEndpointsList(_streamingEndpoints.Count > 0 ? 0 : -1);
 
         PathHint.Text =
-            $"Install defaults:\n{App.Settings.AdjacentSettingsPath}\n\n" +
-            $"Per-user overlay:\n{App.Settings.UserSettingsPath}\n\n" +
-            $"Running from:\n{AppContext.BaseDirectory}";
+            $"Install defaults:\n{App.Settings.InstallSettingsPath}\n\n" +
+            $"Your settings:\n{App.Settings.UserSettingsPath}\n\n" +
+            $"Running from:\n{AppContext.BaseDirectory}\n\nVersion {UpdateService.CurrentVersion}";
 
         ThemeBox.Items.Clear();
         foreach (var (id, label) in App.Theme.GetThemeChoices())
@@ -61,8 +62,7 @@ public sealed partial class SettingsDialog : ContentDialog
         }
 
         var current = ThemeService.Normalize(settings.Theme);
-        ThemeBox.SelectedItem = ThemeBox.Items
-            .OfType<ComboBoxItem>()
+        ThemeBox.SelectedItem = ThemeBox.Items.OfType<ComboBoxItem>()
             .FirstOrDefault(i => string.Equals(i.Tag?.ToString(), current, StringComparison.OrdinalIgnoreCase))
             ?? ThemeBox.Items.OfType<ComboBoxItem>().FirstOrDefault();
     }
@@ -125,20 +125,20 @@ public sealed partial class SettingsDialog : ContentDialog
             return;
         }
 
-        ApplyEndpointFieldsToSelected();
+        if (e.RemovedItems.FirstOrDefault() is StreamingEndpoint previous)
+        {
+            ApplyEndpointFields(previous);
+        }
+
         LoadSelectedEndpointFields();
     }
 
     private void StreamingAddEndpoint_Click(object sender, RoutedEventArgs e)
     {
         ApplyEndpointFieldsToSelected();
-        var endpoint = new StreamingEndpoint
-        {
-            Id = $"stream-{_streamingEndpoints.Count + 1}",
-            Label = $"Stream {_streamingEndpoints.Count + 1}"
-        };
-        _streamingEndpoints.Add(endpoint);
-        RefreshStreamingEndpointsList(selectIndex: _streamingEndpoints.Count - 1);
+        var number = _streamingEndpoints.Count + 1;
+        _streamingEndpoints.Add(new StreamingEndpoint { Id = $"stream-{number}", Label = $"Stream {number}" });
+        RefreshStreamingEndpointsList(_streamingEndpoints.Count - 1);
     }
 
     private void StreamingRemoveEndpoint_Click(object sender, RoutedEventArgs e)
@@ -150,13 +150,20 @@ public sealed partial class SettingsDialog : ContentDialog
         }
 
         _streamingEndpoints.RemoveAt(index);
-        var next = Math.Min(index, _streamingEndpoints.Count - 1);
-        RefreshStreamingEndpointsList(selectIndex: next);
+        RefreshStreamingEndpointsList(Math.Min(index, _streamingEndpoints.Count - 1));
     }
 
     private void ApplyEndpointFieldsToSelected()
     {
-        if (_suppressEndpointEdit || StreamingEndpointsList.SelectedItem is not StreamingEndpoint endpoint)
+        if (StreamingEndpointsList.SelectedItem is StreamingEndpoint endpoint)
+        {
+            ApplyEndpointFields(endpoint);
+        }
+    }
+
+    private void ApplyEndpointFields(StreamingEndpoint endpoint)
+    {
+        if (_suppressEndpointEdit)
         {
             return;
         }
@@ -166,97 +173,77 @@ public sealed partial class SettingsDialog : ContentDialog
         endpoint.ComputerName = StreamingEndpointComputerBox.Text?.Trim() ?? string.Empty;
         endpoint.ViewStreamUrl = StreamingEndpointViewUrlBox.Text?.Trim() ?? string.Empty;
         endpoint.ControlAppUrl = StreamingEndpointControlUrlBox.Text?.Trim() ?? string.Empty;
-
-        var index = StreamingEndpointsList.SelectedIndex;
-        _suppressEndpointSelection = true;
-        StreamingEndpointsList.Items[index] = endpoint;
-        StreamingEndpointsList.SelectedIndex = index;
-        _suppressEndpointSelection = false;
     }
 
     private void RestoreDefaultsButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!App.Settings.RestoreFromInstallDefaults())
+        try
         {
-            PathHint.Text =
-                $"Could not read install defaults from:\n{App.Settings.AdjacentSettingsPath}\n\n" +
-                "Republish/reinstall so that file includes the latest sections (streaming, etc.).";
+            App.Settings.ResetUserSettings();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ShowError("Could not reset your settings: " + ErrorTranslator.Describe(ex));
             return;
         }
 
         DefaultsRestored = true;
+        ErrorText.Visibility = Visibility.Collapsed;
         LoadFieldsFromSettings();
-        PathHint.Text =
-            $"Restored from install defaults and saved to:\n{App.Settings.ActiveSettingsPath}\n\n" +
-            "Click Save if you still want to edit fields, or Cancel to close. Streaming and other install sections are now in your user settings.";
     }
 
     private void ContentDialog_PrimaryButtonClick(ContentDialog sender, ContentDialogButtonClickEventArgs args)
     {
+        ErrorText.Visibility = Visibility.Collapsed;
         ApplyEndpointFieldsToSelected();
 
-        var settings = App.Settings.Current;
-        settings.ProgramTitle = string.IsNullOrWhiteSpace(ProgramTitleBox.Text)
-            ? "Toolbox"
-            : ProgramTitleBox.Text.Trim();
+        var settings = SettingsJson.Clone(App.Settings.Current);
+        settings.ProgramTitle = string.IsNullOrWhiteSpace(ProgramTitleBox.Text) ? "Toolbox" : ProgramTitleBox.Text.Trim();
         settings.Ldap.RootOu = RootOuBox.Text?.Trim() ?? settings.Ldap.RootOu;
-        settings.Search.ComputerNamePrefixes = SplitCsv(PrefixesBox.Text);
-        settings.Ping.TimeoutMs = (int)Math.Clamp(PingTimeoutBox.Value, 500, 30000);
-        settings.AccessControl.Enabled = AccessControlToggle.IsOn;
-        settings.AccessControl.AllowedGroups = SplitCsv(AllowedGroupsBox.Text);
+        settings.Search.ComputerNamePrefixes = DialogText.SplitList(PrefixesBox.Text);
+        if (!double.IsNaN(PingTimeoutBox.Value))
+        {
+            settings.Ping.TimeoutMs = (int)Math.Clamp(PingTimeoutBox.Value, 500, 30000);
+        }
+
         settings.Deployment.UpdateSourcePath = UpdateSourceBox.Text?.Trim() ?? string.Empty;
         settings.Deployment.AutoUpdateOnClose = AutoUpdateToggle.IsOn;
-
-        settings.Streaming ??= new StreamingSettings();
         settings.Streaming.Enabled = StreamingEnabledToggle.IsOn;
         settings.Streaming.ConnectRemoteToolId = string.IsNullOrWhiteSpace(StreamingConnectToolBox.Text)
             ? "sccm"
             : StreamingConnectToolBox.Text.Trim();
-        settings.Streaming.ChangePasswordUrl = StreamingPasswordUrlBox.Text?.Trim() ?? string.Empty;
+        settings.Streaming.AccountPageUrl = StreamingAccountUrlBox.Text?.Trim() ?? string.Empty;
         settings.Streaming.Endpoints = _streamingEndpoints
-            .Select(CloneEndpoint)
+            .Select(e => e.Clone())
             .Where(e => !string.IsNullOrWhiteSpace(e.Id) || !string.IsNullOrWhiteSpace(e.Label))
             .ToList();
-
         if (ThemeBox.SelectedItem is ComboBoxItem { Tag: string themeId })
         {
             settings.Theme = ThemeService.Normalize(themeId);
         }
 
-        try
-        {
-
-            App.Settings.SaveUserSettings(settings);
-            PathHint.Text = $"Saved to:\n{App.Settings.ActiveSettingsPath}";
-        }
-        catch (Exception ex)
+        var errors = DialogText.ErrorsFor(settings, "ldap.rootOu", "deployment.updateSourcePath", "streaming.");
+        if (errors.Count > 0)
         {
             args.Cancel = true;
-            PathHint.Text = $"Save failed: {ex.Message}";
+            ShowError(DialogText.Describe(errors));
+            return;
+        }
+
+        try
+        {
+            App.Settings.SaveUserSettings(settings, markSetupComplete: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            args.Cancel = true;
+            ShowError("Save failed: " + ErrorTranslator.Describe(ex));
         }
     }
 
-    private static StreamingEndpoint CloneEndpoint(StreamingEndpoint source) => new()
+    private void ShowError(string message)
     {
-        Id = source.Id,
-        Label = source.Label,
-        ComputerName = source.ComputerName,
-        ViewStreamUrl = source.ViewStreamUrl,
-        ControlAppUrl = source.ControlAppUrl
-    };
-
-    private static List<string> SplitCsv(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return new List<string>();
-        }
-
-        return text
-            .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
-            .Select(s => s.Trim())
-            .Where(s => s.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        ErrorText.Text = message;
+        ErrorText.Visibility = Visibility.Visible;
     }
 }

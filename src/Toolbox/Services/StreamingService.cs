@@ -1,4 +1,7 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using Toolbox.Diagnostics;
+using Toolbox.Launching;
 using Toolbox.Models;
 
 namespace Toolbox.Services;
@@ -14,88 +17,65 @@ public sealed class StreamingService
         _remoteTools = remoteTools;
     }
 
-    public bool IsTabVisible
-    {
-        get
-        {
-            var streaming = _settings.Current.Streaming;
-            return streaming.Enabled && GetEndpoints().Count > 0;
-        }
-    }
+    public bool IsTabVisible => _settings.Current.Streaming.Enabled && GetEndpoints().Count > 0;
 
-    public IReadOnlyList<StreamingEndpoint> GetEndpoints()
-    {
-        return _settings.Current.Streaming.Endpoints
+    public IReadOnlyList<StreamingEndpoint> GetEndpoints() =>
+        _settings.Current.Streaming.Endpoints
             .Where(e => !string.IsNullOrWhiteSpace(e.Id) || !string.IsNullOrWhiteSpace(e.Label))
             .ToList();
-    }
 
-    public string ChangePasswordUrl =>
-        _settings.Current.Streaming.ChangePasswordUrl?.Trim() ?? string.Empty;
+    public string AccountPageUrl => _settings.Current.Streaming.AccountPageUrl?.Trim() ?? string.Empty;
 
     public string Connect(StreamingEndpoint endpoint)
     {
         var computerName = string.IsNullOrWhiteSpace(endpoint.ComputerName)
-            ? endpoint.Label
+            ? endpoint.Label?.Trim() ?? string.Empty
             : endpoint.ComputerName.Trim();
-
-        if (string.IsNullOrWhiteSpace(computerName))
+        if (computerName.Length == 0)
         {
-            return "No computer name configured for this streaming endpoint.";
+            return "No computer name is configured for this streaming endpoint.";
         }
 
         var toolId = string.IsNullOrWhiteSpace(_settings.Current.Streaming.ConnectRemoteToolId)
             ? "sccm"
             : _settings.Current.Streaming.ConnectRemoteToolId.Trim();
-
         var tools = _remoteTools.GetAvailableTools();
         var tool = tools.FirstOrDefault(t => string.Equals(t.Id, toolId, StringComparison.OrdinalIgnoreCase))
                    ?? tools.FirstOrDefault();
-
         if (tool is null)
         {
             return $"Remote tool '{toolId}' is not installed on this PC.";
         }
 
-        try
-        {
-            _remoteTools.LaunchRemote(tool, computerName);
-            return $"Connecting to streaming PC {computerName} with {tool.Label}.";
-        }
-        catch (Exception ex)
-        {
-            return $"Failed to connect to {computerName}: {ex.Message}";
-        }
+        return _remoteTools.LaunchRemote(tool, computerName).Message;
     }
 
-    public string OpenViewStream(StreamingEndpoint endpoint) =>
-        OpenUrl(endpoint.ViewStreamUrl, "view stream");
+    public string OpenViewStream(StreamingEndpoint endpoint) => OpenUrl(endpoint.ViewStreamUrl, "the stream viewer");
 
-    public string OpenControlApp(StreamingEndpoint endpoint) =>
-        OpenUrl(endpoint.ControlAppUrl, "control app");
+    public string OpenControlApp(StreamingEndpoint endpoint) => OpenUrl(endpoint.ControlAppUrl, "the control app");
 
-    public string OpenChangePassword() =>
-        OpenUrl(ChangePasswordUrl, "change stream password");
+    public string OpenStreamAccountPage() => OpenUrl(AccountPageUrl, "the stream account page");
 
-    private static string OpenUrl(string? url, string actionLabel)
+    private static string OpenUrl(string? url, string what)
     {
-        if (string.IsNullOrWhiteSpace(url))
+        var check = UrlPolicy.Check(url);
+        if (!check.IsValid)
         {
-            return $"No URL configured for {actionLabel}.";
+            return $"Cannot open {what}: {check.Error}";
         }
 
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = url.Trim(),
-                UseShellExecute = true
-            });
-            return $"Opened {actionLabel}.";
+            using var process = Process.Start(new ProcessStartInfo(check.Uri!.AbsoluteUri) { UseShellExecute = true });
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
         {
-            return $"Failed to open {actionLabel}: {ex.Message}";
+            AppLog.Warn($"Opening {check.Uri!.Host} failed.", ex);
+            return $"Could not open {what}: {ErrorTranslator.Describe(ex)}";
         }
+
+        return check.IsInsecure
+            ? $"Opened {what} over plain http ({check.Uri.Host})."
+            : $"Opened {what}.";
     }
 }
