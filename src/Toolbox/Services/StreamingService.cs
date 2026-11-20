@@ -54,7 +54,7 @@ public sealed class StreamingService
 
     public string OpenControlApp(StreamingEndpoint endpoint) => OpenUrl(endpoint.ControlAppUrl, "the control app");
 
-    public string OpenChangePassword() => OpenUrl(ChangePasswordUrl, "the password page");
+    public string OpenStreamAccountPage() => OpenUrl(ChangePasswordUrl, "the password page");
 
     private static string OpenUrl(string? url, string what)
     {

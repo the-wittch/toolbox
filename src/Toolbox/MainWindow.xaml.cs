@@ -886,7 +886,7 @@ public sealed partial class MainWindow : Window
         Log(SelectedStreamingEndpoint is { } endpoint ? App.Streaming.OpenControlApp(endpoint) : "Select a streaming PC first.");
 
     private void StreamingPasswordButton_Click(object sender, RoutedEventArgs e) =>
-        Log(App.Streaming.OpenChangePassword());
+        Log(App.Streaming.OpenStreamAccountPage());
 
     private void Log(string message)
     {
