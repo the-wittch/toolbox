@@ -63,7 +63,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.9169" GeneratePathProperty="true" />
-    <PackageReference Include="System.DirectoryServices" Version="10.0.14" />
+    <PackageReference Include="System.DirectoryServices" Version="10.0.15" />
     <Manifest Include="$(ApplicationManifest)" />
   </ItemGroup>
 
