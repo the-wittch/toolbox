@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Toolbox.Models;
 
 public sealed class AppSettings
@@ -40,7 +42,8 @@ public sealed class StreamingSettings
 
     public string ConnectRemoteToolId { get; set; } = "sccm";
 
-    public string ChangePasswordUrl { get; set; } = string.Empty;
+    [JsonPropertyName("changePasswordUrl")]
+    public string AccountPageUrl { get; set; } = string.Empty;
 
     public List<StreamingEndpoint> Endpoints { get; set; } = new();
 }

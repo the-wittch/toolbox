@@ -215,7 +215,7 @@ public static class SettingsValidator
 
     private static void ValidateStreaming(StreamingSettings streaming, List<ValidationIssue> issues)
     {
-        CheckUrl(issues, "streaming.changePasswordUrl", streaming.ChangePasswordUrl, optional: true);
+        CheckUrl(issues, "streaming.changePasswordUrl", streaming.AccountPageUrl, optional: true);
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < streaming.Endpoints.Count; i++)
         {

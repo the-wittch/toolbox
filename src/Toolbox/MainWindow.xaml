@@ -418,10 +418,10 @@
 
                         <Border Height="1" Background="{ThemeResource ToolboxDividerBrush}" Margin="0,4" />
 
-                        <Button x:Name="StreamingPasswordButton"
+                        <Button x:Name="StreamingAccountButton"
                                 Content="Change stream password"
                                 HorizontalAlignment="Stretch"
-                                Click="StreamingPasswordButton_Click" />
+                                Click="StreamingAccountButton_Click" />
                     </StackPanel>
                 </Border>
             </TabViewItem>

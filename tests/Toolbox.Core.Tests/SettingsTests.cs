@@ -370,3 +370,14 @@ public sealed class SearchHistoryStoreTests : IDisposable
         Assert.Empty(new SearchHistoryStore(path).Load(10));
     }
 }
+
+public class StreamingSettingsCompatibilityTests
+{
+    [Fact]
+    public void Change_password_url_keeps_its_json_name()
+    {
+        var settings = SettingsJson.Deserialize(SettingsJson.ParseObject("{ \"streaming\": { \"changePasswordUrl\": \"https://a.example/\" } }"));
+        Assert.Equal("https://a.example/", settings.Streaming.AccountPageUrl);
+        Assert.True(SettingsJson.ToCanonicalNode(settings)["streaming"]!.AsObject().ContainsKey("changePasswordUrl"));
+    }
+}

@@ -869,7 +869,7 @@ public sealed partial class MainWindow : Window
             : StreamingEndpointCombo.Items.OfType<StreamingEndpoint>()
                   .FirstOrDefault(e => string.Equals(e.Id, selectedId, StringComparison.OrdinalIgnoreCase))
               ?? StreamingEndpointCombo.Items[0];
-        StreamingPasswordButton.Visibility = string.IsNullOrWhiteSpace(App.Streaming.ChangePasswordUrl)
+        StreamingAccountButton.Visibility = string.IsNullOrWhiteSpace(App.Streaming.AccountPageUrl)
             ? Visibility.Collapsed
             : Visibility.Visible;
     }
@@ -885,7 +885,7 @@ public sealed partial class MainWindow : Window
     private void StreamingControlButton_Click(object sender, RoutedEventArgs e) =>
         Log(SelectedStreamingEndpoint is { } endpoint ? App.Streaming.OpenControlApp(endpoint) : "Select a streaming PC first.");
 
-    private void StreamingPasswordButton_Click(object sender, RoutedEventArgs e) =>
+    private void StreamingAccountButton_Click(object sender, RoutedEventArgs e) =>
         Log(App.Streaming.OpenStreamAccountPage());
 
     private void Log(string message)

@@ -44,7 +44,7 @@ public sealed partial class SettingsDialog : ContentDialog
         StreamingConnectToolBox.Text = string.IsNullOrWhiteSpace(settings.Streaming.ConnectRemoteToolId)
             ? "sccm"
             : settings.Streaming.ConnectRemoteToolId;
-        StreamingPasswordUrlBox.Text = settings.Streaming.ChangePasswordUrl;
+        StreamingAccountUrlBox.Text = settings.Streaming.AccountPageUrl;
 
         _streamingEndpoints.Clear();
         _streamingEndpoints.AddRange(settings.Streaming.Endpoints.Select(e => e.Clone()));
@@ -212,7 +212,7 @@ public sealed partial class SettingsDialog : ContentDialog
         settings.Streaming.ConnectRemoteToolId = string.IsNullOrWhiteSpace(StreamingConnectToolBox.Text)
             ? "sccm"
             : StreamingConnectToolBox.Text.Trim();
-        settings.Streaming.ChangePasswordUrl = StreamingPasswordUrlBox.Text?.Trim() ?? string.Empty;
+        settings.Streaming.AccountPageUrl = StreamingAccountUrlBox.Text?.Trim() ?? string.Empty;
         settings.Streaming.Endpoints = _streamingEndpoints
             .Select(e => e.Clone())
             .Where(e => !string.IsNullOrWhiteSpace(e.Id) || !string.IsNullOrWhiteSpace(e.Label))

@@ -24,7 +24,7 @@ public sealed class StreamingService
             .Where(e => !string.IsNullOrWhiteSpace(e.Id) || !string.IsNullOrWhiteSpace(e.Label))
             .ToList();
 
-    public string ChangePasswordUrl => _settings.Current.Streaming.ChangePasswordUrl?.Trim() ?? string.Empty;
+    public string AccountPageUrl => _settings.Current.Streaming.AccountPageUrl?.Trim() ?? string.Empty;
 
     public string Connect(StreamingEndpoint endpoint)
     {
@@ -54,7 +54,7 @@ public sealed class StreamingService
 
     public string OpenControlApp(StreamingEndpoint endpoint) => OpenUrl(endpoint.ControlAppUrl, "the control app");
 
-    public string OpenStreamAccountPage() => OpenUrl(ChangePasswordUrl, "the password page");
+    public string OpenStreamAccountPage() => OpenUrl(AccountPageUrl, "the password page");
 
     private static string OpenUrl(string? url, string what)
     {
